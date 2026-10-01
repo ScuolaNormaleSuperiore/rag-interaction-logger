@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[RIL commit-msg] Checking commit message..." >&2
+
+if grep -Eiq '^Co-Authored-By:[[:space:]]*(Claude|ChatGPT|Codex|OpenAI)([[:space:]]|$)' "$1"; then
+	echo "Commit blocked: remove AI Co-Authored-By trailer(s)." >&2
+	exit 1
+fi
+
+exit 0

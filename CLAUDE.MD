@@ -1,0 +1,1 @@
+C:/SPAZIODATI/GoogleDriveLavoro/Progetti/PR-AI-Chatbot-LLM-Skills/LOGGER_PRIVATE_DEV/AGENTS/CLAUDE.md
