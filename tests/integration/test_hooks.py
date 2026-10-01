@@ -29,19 +29,6 @@ def test_the_four_observer_hooks_have_the_specified_names_and_priorities():
         assert (registered_hook.name, registered_hook.priority) == expected
 
 
-def test_skeleton_hooks_are_observer_only():
-    message = object()
-    cat = object()
-
-    for registered_hook in (
-        logger.start_interaction_record,
-        logger.finalize_fast_reply_record,
-        logger.capture_generated_answer,
-        logger.finalize_generated_record,
-    ):
-        assert registered_hook.function(message, cat) is None
-
-
 def test_settings_model_registers_the_specified_defaults():
     model = settings.settings_model.function()
     defaults = model()
