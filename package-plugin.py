@@ -15,8 +15,11 @@ INCLUDED_FILES = (
     "README.md",
     "LICENSE",
     "requirements.txt",
+    "db.py",
     "record.py",
+    "schema.py",
     "settings.py",
+    "writer.py",
     "rag_interaction_logger.py",
 )
 
