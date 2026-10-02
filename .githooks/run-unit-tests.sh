@@ -16,9 +16,12 @@ cd "$repo_root"
 # in silence. Run the full suite before pushing instead.
 test_target=".tests/unit"
 
+# A missing test folder is an error, never a pass: the tests moved once (tests/ became
+# .tests/) and a hook that said "nothing to run" would have skipped them in silence.
 if [ ! -d "$test_target" ]; then
-	echo "[RIL pre-commit] $test_target not found, nothing to run." >&2
-	exit 0
+	echo "[RIL pre-commit] $test_target not found: the unit tests cannot run." >&2
+	echo "Commit blocked: a missing test folder must not read as a pass." >&2
+	exit 1
 fi
 
 python_bin=""
