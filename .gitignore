@@ -226,3 +226,6 @@ settings.json
 /CLAUDE.MD
 /AGENTS.md
 /CLAUDE.md
+
+# Local database-test settings: a server and a password
+/.ril-test.env

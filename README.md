@@ -182,14 +182,19 @@ python run-tests.py --unit          # pure Python; no Cheshire Cat required
 python run-tests.py --integration   # hook adapters; requires the running Cat container
 python run-tests.py                 # unit and integration tests in the container
 python run-tests.py --detailed      # same suite, listing each test
-python run-tests.py --database      # against a real MySQL or MariaDB server
+python run-tests.py --database      # only the tests against a real MySQL or MariaDB server
 ```
 
+The tests live in `.tests/`; the name starts with a dot on purpose, so that Cheshire Cat,
+which imports every `.py` file in a plugin folder, does not import them.
 Unit tests cover pure record assembly, metadata and release packaging.
 Integration tests cover Cheshire Cat hook registration, priorities and the
-observer contract. Database tests need a server described by `RIL_TEST_DB_HOST`,
-`RIL_TEST_DB_USER` and `RIL_TEST_DB_PASSWORD` (a user that can create databases;
-they work in throwaway databases and skip when these are not set). The integration
+observer contract. Database tests need a server and a user that can create databases (they work in
+throwaway databases and never touch the application database). Describe it once:
+copy `.ril-test.env.example` to `.ril-test.env` (git-ignored) and fill it in; the runner
+reads it, and `python run-tests.py` then runs the database tests too. The same
+`RIL_TEST_DB_*` variables in the environment work and win over the file. Without a server
+the database tests are skipped, and the runner says so. The integration
 suite is skipped on a local interpreter where Cheshire Cat is unavailable.
 
 ## License

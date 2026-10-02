@@ -38,7 +38,7 @@ def test_package_excludes_development_material():
     assert not [
         name
         for name in package.INCLUDED_FILES
-        if name.startswith(("tests/", "DEV/", "DOC/", ".githooks/"))
+        if name.startswith(("tests/", ".tests/", "DEV/", "DOC/", ".githooks/"))
     ]
 
 
@@ -55,7 +55,7 @@ def test_the_zip_holds_only_the_runtime_files_under_the_plugin_folder(tmp_path):
         shipped = json.loads(archive.read(f"{slug}/plugin.json"))
     assert names and all(name.startswith(f"{slug}/") for name in names)
     assert sorted(name.split("/", 1)[1] for name in names) == sorted(package.INCLUDED_FILES)
-    for private in ("tests/", "DEV/", "settings.json", "__pycache__", ".githooks", "dist/", "AGENTS", "CLAUDE"):
+    for private in ("tests/", ".tests/", ".ril-test", "DEV/", "settings.json", "__pycache__", ".githooks", "dist/", "AGENTS", "CLAUDE"):
         assert not [name for name in names if private in name], private
     assert shipped["version"] == metadata["version"]
 

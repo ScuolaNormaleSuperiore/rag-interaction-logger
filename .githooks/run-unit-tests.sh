@@ -9,12 +9,12 @@ echo "[RIL pre-commit] Running unit tests..." >&2
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-# Only tests/unit runs here: it needs nothing but pytest and finishes quickly.
-# tests/integration stays out on purpose, because it needs the Cheshire Cat core
+# Only .tests/unit runs here: it needs nothing but pytest and finishes quickly.
+# .tests/integration stays out on purpose, because it needs the Cheshire Cat core
 # importable, in practice the running container. A commit must not depend on
 # Docker being up, otherwise the hook either blocks legitimate commits or skips
 # in silence. Run the full suite before pushing instead.
-test_target="tests/unit"
+test_target=".tests/unit"
 
 if [ ! -d "$test_target" ]; then
 	echo "[RIL pre-commit] $test_target not found, nothing to run." >&2
@@ -56,7 +56,7 @@ fi
 if ! "$python_bin" -m pytest "$test_target"; then
 	echo >&2
 	echo "Commit blocked: unit tests failed." >&2
-	echo "Reproduce with: python -m pytest tests/unit" >&2
+	echo "Reproduce with: python -m pytest .tests/unit" >&2
 	exit 1
 fi
 
