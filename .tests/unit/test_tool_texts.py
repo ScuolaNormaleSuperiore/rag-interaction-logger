@@ -187,3 +187,37 @@ def test_capture_generated_records_the_sources_next_to_the_count():
     assert json.loads(record.recall_sources)[0]["source"] == "guida_badge.pdf"
     assert capture_generated(started(), "a", None).recall_sources is None
     assert capture_generated(started(), "a", []).recall_sources is None
+
+
+class Unconvertible:
+    """Stands for a huge tool result: converting it to text must not happen."""
+
+    def __str__(self):
+        raise AssertionError("a tool text that is not saved was converted")
+
+
+def test_texts_that_are_not_to_be_saved_are_never_converted():
+    steps = [(("service_status", Unconvertible()), Unconvertible())]
+
+    record = capture_generated(started(), "answer", [], steps, include_tool_input=False, include_tool_output=False)
+
+    assert record.tools_used == "service_status"
+    assert record.tool_input is None and record.tool_output is None
+
+
+def test_only_the_requested_text_is_converted():
+    steps = [(("service_status", "kto"), Unconvertible())]
+
+    record = capture_generated(started(), "answer", [], steps, include_tool_output=False)
+
+    assert json.loads(record.tool_input) == [{"tool": "service_status", "input": "kto"}]
+    assert record.tool_output is None
+
+
+def test_both_texts_are_kept_by_default():
+    steps = [(("service_status", "kto"), "up")]
+
+    record = capture_generated(started(), "answer", [], steps)
+
+    assert json.loads(record.tool_input)[0]["input"] == "kto"
+    assert json.loads(record.tool_output)[0]["output"] == "up"

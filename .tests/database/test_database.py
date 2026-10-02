@@ -23,7 +23,7 @@ from record import (
     resolve_turn,
     start_record,
 )
-from schema import COLUMNS, INSERT_SQL, to_row
+from schema import COLUMNS, INSERT_SQL, cut_text, to_row
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -163,9 +163,7 @@ def test_recall_count_distinguishes_zero_from_unknown(scratch):
 # ------------------------------------------------------------------ texts and widths
 
 
-def test_long_and_awkward_texts_round_trip_unchanged(scratch):
-    if scratch.rows("SELECT @@max_allowed_packet")[0][0] < 4 * 1024 * 1024:
-        pytest.skip("the server accepts statements under 4 MB")
+def test_long_texts_are_cut_and_awkward_ones_round_trip_unchanged(scratch):
     long_question = "è😀" * 100_000
     long_answer = "ü" * 300_000
     awkward = "100% %s {0} `x` 'single' \"double\" back\\slash ; DROP TABLE ril_interactions; -- \n\ttab\r\nend"
@@ -176,8 +174,10 @@ def test_long_and_awkward_texts_round_trip_unchanged(scratch):
     scratch.pump(writer)
 
     rows = scratch.table_rows("question, llm_answer, delivered, CHAR_LENGTH(question)")
-    assert rows[0][0] == long_question and rows[0][1] == rows[0][2] == long_answer
-    assert rows[0][3] == len(long_question)
+    assert rows[0][0] == cut_text(long_question)
+    assert rows[0][1] == rows[0][2] == cut_text(long_answer)
+    assert rows[0][3] == len(cut_text(long_question))
+    assert "[cut: 200000 characters in total]" in rows[0][0]
     assert rows[1][0] == awkward and rows[1][1] == awkward
 
 

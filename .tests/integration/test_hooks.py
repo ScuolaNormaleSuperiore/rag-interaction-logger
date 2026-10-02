@@ -47,6 +47,15 @@ def test_settings_model_registers_the_specified_defaults():
     assert defaults.retention_days == 0
 
 
+def test_settings_that_size_memory_and_time_have_an_upper_bound():
+    model = settings.settings_model.function()
+
+    for name, too_big in (("queue_size", 10001), ("retention_days", 3651)):
+        with pytest.raises(Exception, match=name):
+            model(**{name: too_big})
+    assert model(queue_size=10000, retention_days=3650).queue_size == 10000
+
+
 def test_password_setting_renders_as_a_masked_input():
     schema = settings.settings_model.function().model_json_schema()
 

@@ -33,6 +33,8 @@ from schema import (
     UPDATE_COLUMNS,
     UPDATE_SQL,
     blank_at,
+    TEXT_LIMIT,
+    cut_text,
     retention_cutoff,
     to_row,
     to_update_params,
@@ -257,3 +259,40 @@ def test_the_table_in_the_readme_is_the_one_the_plugin_creates():
 
     assert len(ddl) == 1
     assert " ".join(ddl[0].replace(";", "").split()) == " ".join(CREATE_TABLE_SQL.split())
+
+
+def test_cut_text_keeps_short_texts_and_none_untouched():
+    assert cut_text(None) is None
+    assert cut_text("") == ""
+    assert cut_text("x" * TEXT_LIMIT) == "x" * TEXT_LIMIT
+
+
+def test_cut_text_keeps_the_start_and_says_how_long_the_text_was():
+    cut = cut_text("ab" * TEXT_LIMIT)
+
+    assert cut.startswith("ab" * (TEXT_LIMIT // 2))
+    assert cut.endswith(f"[cut: {2 * TEXT_LIMIT} characters in total]")
+    assert len(cut) < TEXT_LIMIT + 60
+
+
+def test_the_row_and_the_update_carry_the_cut_texts_so_the_queue_stays_small():
+    record = start_record(
+        ts=datetime(2026, 10, 2, 12, tzinfo=timezone.utc), started_ns=0, instance="pod",
+        user_id="u", question="q" * (5 * TEXT_LIMIT), guard_turn_id_at_start=None,
+        local_turn_id="a" * 32,
+    )
+    record = finalize_generated(record, "d" * (5 * TEXT_LIMIT), None, 1_000_000)
+    record = capture_generated(record, "l" * (5 * TEXT_LIMIT), [])
+    row = dict(zip(COLUMNS, to_row(record), strict=True))
+    update = dict(zip(UPDATE_COLUMNS, to_update_params(record, 7)[:-1], strict=True))
+
+    for value in (row["question"], row["llm_answer"], row["delivered"],
+                  update["llm_answer"], update["delivered"]):
+        assert len(value) < TEXT_LIMIT + 60 and "characters in total]" in value
+
+
+def test_a_retention_older_than_the_calendar_purges_nothing_instead_of_raising():
+    now = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
+
+    assert retention_cutoff(now, 10**9) is None
+    assert retention_cutoff(now, 740_000) is None

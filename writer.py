@@ -51,8 +51,9 @@ except ImportError:  # pragma: no cover - depends on how the module is loaded
 
 PREFIX = "RAG Interaction Logger: "
 DEFAULT_QUEUE_SIZE = 1000
+MAX_QUEUE_SIZE = 10000
 POLL_SECONDS = 1.0
-STOP_TIMEOUT_SECONDS = 5.0
+STOP_TIMEOUT_SECONDS = 0.5
 CORRELATION_TTL_SECONDS = 24 * 3600
 CORRELATION_SWEEP_SECONDS = 60
 PURGE_INTERVAL_SECONDS = 24 * 3600
@@ -98,6 +99,10 @@ class Writer:
         self._next_purge_check = 0.0
         self._purge_cutoff: datetime | None = None
         self._tool_text_limit = TOOL_TEXT_LIMIT
+        self._keeps_tool_input = False
+        self._keeps_tool_output = False
+        self._resume = False
+        self._loop_error: str | None = None
 
     # -- called from the hooks: never block, never raise ---------------------
 
@@ -137,24 +142,44 @@ class Writer:
         self._queue = queue.Queue(maxsize=self._queue_size_from(settings))
 
     def start(self) -> bool:
-        """Start the worker; return False if one is already running."""
+        """Start the worker; return False if one is already running.
+
+        A worker that was stopped but is still finishing a database call is not
+        replaced at once (two workers would share one connection): this call leaves
+        a request and the old worker starts the new one when it ends.
+        """
         with self._lifecycle:
             if self._thread is not None and self._thread.is_alive():
+                if self._stop.is_set():
+                    self._resume = True
                 return False
-            self.prepare()
-            self._stop = threading.Event()
-            self._thread = threading.Thread(
-                target=self._loop, args=(self._stop,), name="ril-writer", daemon=True
-            )
-            self._thread.start()
+            self._launch()
             return True
 
+    def _launch(self) -> None:
+        self.prepare()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, args=(self._stop,), name="ril-writer", daemon=True
+        )
+        self._thread.start()
+
     def stop(self, timeout: float = STOP_TIMEOUT_SECONDS) -> None:
-        """Ask the worker to end; it closes its own connection. Queued events are lost."""
+        """Ask the worker to end; it closes its own connection. Queued events are lost.
+
+        The wait is short on purpose: the Cat calls this on the event loop, and a
+        worker stuck in a database call would otherwise hold every request for as long.
+        """
         with self._lifecycle:
             self._stop.set()
-            self._queue = None
+            waiting, self._queue = self._queue, None
+            self._resume = False
             thread = self._thread
+        if waiting is not None:
+            try:
+                waiting.put_nowait(None)  # wakes an idle worker; `step` ignores it
+            except queue.Full:
+                pass  # a busy worker sees the stop flag on its next turn of the loop
         if thread is not None:
             thread.join(timeout)
 
@@ -173,6 +198,16 @@ class Writer:
         return self._tool_text_limit
 
     @property
+    def keeps_tool_input(self) -> bool:
+        """Whether `log_tool_input` was on when the worker last read the settings."""
+        return self._keeps_tool_input
+
+    @property
+    def keeps_tool_output(self) -> bool:
+        """Whether `log_tool_output` was on when the worker last read the settings."""
+        return self._keeps_tool_output
+
+    @property
     def pending_count(self) -> int:
         """Turns whose start was written and whose finish has not arrived."""
         return len(self._ids)
@@ -182,9 +217,38 @@ class Writer:
     def _loop(self, stop: threading.Event) -> None:
         try:
             while not stop.is_set():
-                self.step()
+                try:
+                    self.step()
+                    self._loop_error = None
+                except Exception as error:
+                    # Nothing may end the worker: with it gone no row is written and
+                    # nothing reports it. Report once per kind of error and go on.
+                    self._loop_failed(error)
+                    stop.wait(POLL_SECONDS)
         finally:
             self._close_connection()
+            self._take_over()
+
+    def _take_over(self) -> None:
+        """At the end of a stopped worker, start the one a later `start()` asked for."""
+        with self._lifecycle:
+            if self._thread is threading.current_thread():
+                self._thread = None
+            if self._resume:
+                self._resume = False
+                try:
+                    self._launch()
+                except Exception as error:
+                    self._warn(f"the writer could not be restarted ({type(error).__name__})")
+
+    def _loop_failed(self, error: BaseException) -> None:
+        name = type(error).__name__
+        if name != self._loop_error:
+            self._loop_error = name
+            try:
+                self._warn(f"the writer hit an unexpected error ({name}) and keeps running")
+            except Exception:
+                pass
 
     def step(self, timeout: float | None = None) -> None:
         """Run one worker iteration: report losses, handle one event, advance the purge."""
@@ -382,10 +446,13 @@ class Writer:
 
     def _remember_tool_text_limit(self, settings: dict) -> None:
         self._tool_text_limit = tool_text_limit_from(settings)
+        self._keeps_tool_input = settings.get("log_tool_input") is True
+        self._keeps_tool_output = settings.get("log_tool_output") is True
 
     @staticmethod
     def _queue_size_from(settings: dict) -> int:
         try:
-            return max(1, int(settings.get("queue_size") or DEFAULT_QUEUE_SIZE))
+            size = int(settings.get("queue_size") or DEFAULT_QUEUE_SIZE)
+            return max(1, min(MAX_QUEUE_SIZE, size))
         except (TypeError, ValueError):
             return DEFAULT_QUEUE_SIZE

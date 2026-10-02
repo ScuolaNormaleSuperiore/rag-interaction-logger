@@ -477,3 +477,18 @@ def test_the_guard_hooks_sit_strictly_between_the_logger_hooks():
         < default_priority
         < logger.capture_generated_answer.priority
     )
+
+
+def test_a_logger_that_raises_while_reporting_a_failure_does_not_fail_the_hook(monkeypatch):
+    class BrokenLog:
+        def warning(self, message):
+            raise RuntimeError("the log is broken")
+
+    def broken_submit(record):
+        raise RuntimeError("queue broke")
+
+    monkeypatch.setattr(logger, "log", BrokenLog())
+    monkeypatch.setattr(logger._writer, "submit_start", broken_submit, raising=False)
+    cat = make_cat()
+
+    assert run_start(cat) is None

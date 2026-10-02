@@ -78,8 +78,8 @@ Open the plugin in the admin panel.
 | `log_tool_output` | off | Also save the text each tool returns. |
 | `tool_text_limit` | `1000` | Longest tool input or output saved, in characters (100–10000). |
 | `create_table` | on | Create `ril_interactions` when it is missing. |
-| `queue_size` | `1000` | Events waiting for the writer; when full, new events are lost. |
-| `retention_days` | `0` | `0` keeps rows forever; a positive number deletes rows older than that many whole UTC days. |
+| `queue_size` | `1000` | Events waiting for the writer, 1–10000 (a turn queues two); when full, new events are lost. |
+| `retention_days` | `0` | `0` keeps rows forever; a positive number (at most 3650) deletes rows older than that many whole UTC days. |
 
 ## Check the connection
 
@@ -118,7 +118,9 @@ One row per turn in `ril_interactions` (a turn is a question and its reply; the 
 no sessions):
 
 - when it arrived (UTC), how long it took, the Cat instance and the user;
-- the question, the answer the LLM generated and the answer actually delivered;
+- the question, the answer the LLM generated and the answer actually delivered, each
+  cut at 20,000 characters and ending with `[cut: N characters in total]` when longer, so
+  that a huge message cannot fill the memory of the queue;
 - the outcome: `generated`, `fast_reply` (a plugin answered before the LLM) or
   `incomplete` (the turn started and never finished, for example the agent failed);
 - when the `rag-guardrails` plugin is installed, its

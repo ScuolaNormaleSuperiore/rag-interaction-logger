@@ -66,12 +66,17 @@ class RagInteractionLoggerSettings(BaseModel):
     queue_size: int = Field(
         default=1000,
         ge=1,
-        description="Maximum completed records waiting for database insertion.",
+        le=10000,
+        description=(
+            "Maximum events waiting for the database writer (a turn queues two). "
+            "When the queue is full, new events are lost."
+        ),
     )
     retention_days: int = Field(
         default=0,
         ge=0,
-        description="0 keeps records forever; a positive value keeps whole UTC days.",
+        le=3650,
+        description="0 keeps records forever; a positive value keeps whole UTC days (at most 3650).",
     )
 
     @field_validator("db_host", "db_name", "db_user")

@@ -61,6 +61,9 @@ TOOL_OUTPUT_ROW_INDEX = COLUMNS.index("tool_output")
 TOOL_OUTPUT_UPDATE_INDEX = UPDATE_COLUMNS.index("tool_output")
 
 INSTANCE_WIDTH = USER_ID_WIDTH = 255
+# Longest question, LLM answer or delivered answer kept, in characters. The queue is
+# bounded by the number of events, so a cap on their text is what bounds its memory.
+TEXT_LIMIT = 20_000
 TURN_ID_WIDTH = 32
 VERDICT_WIDTH = 64
 
@@ -123,9 +126,9 @@ def to_row(record: InteractionRecord) -> tuple:
         "user_id": record.user_id[:USER_ID_WIDTH],
         "turn_id": _fit(record.turn_id, TURN_ID_WIDTH),
         "outcome": record.outcome,
-        "question": record.question,
-        "llm_answer": record.llm_answer,
-        "delivered": record.delivered,
+        "question": cut_text(record.question),
+        "llm_answer": cut_text(record.llm_answer),
+        "delivered": cut_text(record.delivered),
         "guard_present": record.guard_present,
         "input_verdict": _fit(record.input_verdict, VERDICT_WIDTH),
         "output_verdict": _fit(record.output_verdict, VERDICT_WIDTH),
@@ -159,7 +162,18 @@ def retention_cutoff(now: datetime, days: int) -> datetime | None:
     if days <= 0:
         return None
     today = _naive_utc(now).replace(hour=0, minute=0, second=0, microsecond=0)
-    return today - timedelta(days=days)
+    try:
+        return today - timedelta(days=days)
+    except OverflowError:
+        # Further back than the calendar goes: no row is that old, so nothing is purged.
+        return None
+
+
+def cut_text(value: str | None, limit: int = TEXT_LIMIT) -> str | None:
+    """Keep the first `limit` characters and say how long the text was."""
+    if value is None or len(value) <= limit:
+        return value
+    return f"{value[:limit]}\n[cut: {len(value)} characters in total]"
 
 
 def _naive_utc(ts: datetime) -> datetime:

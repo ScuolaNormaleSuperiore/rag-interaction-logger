@@ -135,6 +135,8 @@ def capture_generated_answer(message, cat):
                 _declarative_recall(message),
                 _intermediate_steps(message),
                 getattr(_writer, "tool_text_limit", TOOL_TEXT_LIMIT),
+                getattr(_writer, "keeps_tool_input", True),
+                getattr(_writer, "keeps_tool_output", True),
             ),
         )
     except Exception as error:
@@ -205,4 +207,7 @@ def _hook_failed(name: str, error: Exception, record=None) -> None:
         return
     _reported.add(kind)
     turn = f" turn={record.turn_id}" if record is not None else ""
-    log.warning(f"RAG Interaction Logger: {name} hook failed ({kind[1]}){turn}")
+    try:
+        log.warning(f"RAG Interaction Logger: {name} hook failed ({kind[1]}){turn}")
+    except Exception:
+        pass  # a broken logger must not turn a logging failure into a hook failure

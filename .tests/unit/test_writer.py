@@ -566,6 +566,22 @@ def test_queue_size_is_read_when_the_worker_starts():
     assert harness.writer.queue_capacity == 7
 
 
+def test_queue_size_is_capped_even_if_the_saved_value_is_larger():
+    harness = Harness({"queue_size": 10**9})
+
+    assert harness.writer.queue_capacity == writer_module.MAX_QUEUE_SIZE
+
+
+def test_a_retention_older_than_the_calendar_does_not_stop_the_inserts():
+    harness = Harness({"retention_days": 10**9})
+    harness.writer.submit_start(turn())
+
+    harness.pump()
+
+    assert len(harness.connection.of(INSERT_SQL)) == 1
+    assert harness.connection.of(PURGE_SQL) == []
+
+
 def run_threaded(settings=None, connect=None):
     log = Log()
     connection = FakeConnection()
@@ -622,7 +638,59 @@ def test_submitting_stays_instant_while_the_database_is_unreachable():
         writer.stop()
 
 
-def test_start_refuses_a_second_worker_while_a_stopped_one_is_still_busy():
+def ril_threads():
+    return [t for t in threading.enumerate() if t.name == "ril-writer"]
+
+
+def test_a_start_while_a_stopped_worker_is_still_busy_is_taken_over_when_it_ends():
+    release = threading.Event()
+    connections = []
+
+    def stuck(**kwargs):
+        release.wait(10)
+        connections.append(FakeConnection())
+        return connections[-1]
+
+    writer, _, _ = run_threaded(connect=stuck)
+    writer.start()
+    writer.submit_start(turn())
+    time.sleep(0.1)
+
+    writer.stop(timeout=0.05)
+    assert writer.start() is False
+    assert len(ril_threads()) == 1, "a second worker would share the connection"
+
+    release.set()
+    assert wait_for(lambda: writer.queue_capacity > 0), "the old worker did not start the new one"
+    writer.submit_start(turn("b" * 32))
+    assert wait_for(lambda: len(connections) >= 2 and connections[-1].of(INSERT_SQL))
+    assert len(ril_threads()) == 1
+    writer.stop()
+
+
+def test_a_stopped_worker_that_nobody_asked_to_restart_just_ends():
+    release = threading.Event()
+
+    def stuck(**kwargs):
+        release.wait(10)
+        return FakeConnection()
+
+    writer, _, _ = run_threaded(connect=stuck)
+    writer.start()
+    writer.submit_start(turn())
+    time.sleep(0.1)
+
+    writer.stop(timeout=0.05)
+    release.set()
+
+    assert wait_for(lambda: not ril_threads())
+    time.sleep(0.2)
+    assert not ril_threads()
+    assert writer.start() is True
+    writer.stop()
+
+
+def test_a_start_followed_by_a_stop_does_not_leave_a_worker_behind():
     release = threading.Event()
 
     def stuck(**kwargs):
@@ -636,12 +704,40 @@ def test_start_refuses_a_second_worker_while_a_stopped_one_is_still_busy():
 
     writer.stop(timeout=0.05)
     assert writer.start() is False
-    assert len([t for t in threading.enumerate() if t.name == "ril-writer"]) == 1
-
+    writer.stop(timeout=0.05)
     release.set()
-    assert wait_for(lambda: not [t for t in threading.enumerate() if t.name == "ril-writer"])
-    assert writer.start() is True
+
+    assert wait_for(lambda: not ril_threads())
+    time.sleep(0.2)
+    assert not ril_threads()
+
+
+def test_stop_does_not_hold_the_caller_for_long_while_the_worker_is_stuck_in_the_database():
+    release = threading.Event()
+
+    def stuck(**kwargs):
+        release.wait(10)
+        return FakeConnection()
+
+    writer, _, _ = run_threaded(connect=stuck)
+    writer.start()
+    writer.submit_start(turn())
+    time.sleep(0.1)
+
+    began = time.monotonic()
     writer.stop()
+    waited = time.monotonic() - began
+    release.set()
+
+    assert waited < 1.5
+    assert wait_for(lambda: not ril_threads())
+
+
+def test_the_writer_reports_which_tool_texts_the_settings_ask_to_keep():
+    harness = Harness({"log_tool_input": True, "log_tool_output": False})
+
+    assert harness.writer.keeps_tool_input is True
+    assert harness.writer.keeps_tool_output is False
 
 
 def test_writer_module_does_not_import_cheshire_cat_or_the_driver():
@@ -649,3 +745,40 @@ def test_writer_module_does_not_import_cheshire_cat_or_the_driver():
 
     assert "import cat" not in source and "from cat" not in source
     assert "pymysql" not in source.lower()
+
+
+def test_the_worker_survives_an_unexpected_error_and_reports_it_once():
+    writer, connection, log = run_threaded()
+    real_step = writer.step
+    failures = []
+
+    def step_that_fails_twice(timeout=None):
+        if len(failures) < 2:
+            failures.append(1)
+            raise ZeroDivisionError(LEAK_MARKER)
+        real_step(timeout)
+
+    writer.step = step_that_fails_twice
+    writer.start()
+    assert wait_for(lambda: len(failures) == 2)
+    writer.submit_start(turn())
+
+    assert wait_for(lambda: connection.of(INSERT_SQL))
+    writer.stop()
+
+    reports = [line for line in log.text("warning") if "unexpected error" in line]
+    assert len(reports) == 1 and "ZeroDivisionError" in reports[0]
+    assert LEAK_MARKER not in " ".join(log.text())
+
+
+def test_stop_wakes_an_idle_worker_instead_of_waiting_for_its_poll(monkeypatch):
+    monkeypatch.setattr(writer_module, "POLL_SECONDS", 30.0)
+    writer, _, _ = run_threaded()
+    writer.start()
+    time.sleep(0.2)
+
+    began = time.monotonic()
+    writer.stop()
+
+    assert time.monotonic() - began < 0.4
+    assert not ril_threads()

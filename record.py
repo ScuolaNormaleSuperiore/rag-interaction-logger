@@ -92,19 +92,24 @@ def capture_generated(
     declarative: list | None,
     steps=None,
     tool_limit: int = TOOL_TEXT_LIMIT,
+    include_tool_input: bool = True,
+    include_tool_output: bool = True,
 ) -> InteractionRecord:
     """Store the LLM answer, the recall and the tools that ran (H3).
 
     `declarative` is `why.memory["declarative"]` and `steps` is
     `why.intermediate_steps`; without them the matching columns stay empty.
-    `tool_limit` is the longest tool input or output kept, in characters.
+    `tool_limit` is the longest tool input or output kept, in characters. A tool
+    text that is not going to be saved (`include_tool_input` or
+    `include_tool_output` false) is not even converted to text: the conversion of a
+    large structure would be paid on every turn for nothing.
     """
-    calls = tool_calls(steps)
+    calls = tool_calls(steps, include_tool_input, include_tool_output)
     found = {
         "llm_answer": text,
         "tools_used": join_tools([name.replace(",", "_") for name, _, _ in calls]),
-        "tool_input": tool_texts_json(calls, "input", tool_limit),
-        "tool_output": tool_texts_json(calls, "output", tool_limit),
+        "tool_input": tool_texts_json(calls, "input", tool_limit) if include_tool_input else None,
+        "tool_output": tool_texts_json(calls, "output", tool_limit) if include_tool_output else None,
         "recall_sources": recall_sources_json(declarative),
     }
     if declarative is None:
@@ -131,17 +136,18 @@ def tool_text_limit_from(settings: dict) -> int:
     return max(TOOL_TEXT_LIMIT_MIN, min(TOOL_TEXT_LIMIT_MAX, value))
 
 
-def tool_calls(steps) -> list[tuple[str, str, str]]:
+def tool_calls(steps, with_input: bool = True, with_output: bool = True) -> list[tuple[str, str, str]]:
     """Return `(name, input, output)` for each tool or form that ran, in order.
 
     Each step of `why.intermediate_steps` is `((name, input), output)`. Anything
-    that is not a step with a name is ignored.
+    that is not a step with a name is ignored. A text that is not asked for
+    (`with_input` or `with_output` false) comes back empty and is never converted.
     """
     if not isinstance(steps, (list, tuple)):
         return []
     calls = []
     for step in steps:
-        parts = _step_parts(step)
+        parts = _step_parts(step, with_input, with_output)
         if parts is not None:
             calls.append(parts)
     return calls
@@ -149,7 +155,7 @@ def tool_calls(steps) -> list[tuple[str, str, str]]:
 
 def tool_names(steps) -> list[str]:
     """Return only the names, with a comma replaced so the list stays parsable."""
-    return [name.replace(",", "_") for name, _, _ in tool_calls(steps)]
+    return [name.replace(",", "_") for name, _, _ in tool_calls(steps, False, False)]
 
 
 def join_tools(names: list[str], width: int = TOOLS_USED_WIDTH) -> str | None:
@@ -260,7 +266,7 @@ def extract_reply_text(value) -> str | None:
     return text if isinstance(text, str) else None
 
 
-def _step_parts(step) -> tuple[str, str, str] | None:
+def _step_parts(step, with_input: bool = True, with_output: bool = True) -> tuple[str, str, str] | None:
     try:
         action = step[0]
         if isinstance(action, (list, tuple)):
@@ -274,7 +280,7 @@ def _step_parts(step) -> tuple[str, str, str] | None:
         return None
     if not isinstance(name, str) or not name.strip():
         return None
-    return name.strip(), _as_text(raw), _as_text(output)
+    return name.strip(), _as_text(raw) if with_input else "", _as_text(output) if with_output else ""
 
 
 def _recall_item(entry) -> dict | None:
