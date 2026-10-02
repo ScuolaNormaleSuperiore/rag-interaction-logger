@@ -45,15 +45,59 @@ is not supported (it removed `mysql_native_password`).
 
 ## Set up the database
 
-Ask the DBA for a database and a dedicated user with the minimum privileges. The same
-script works on MySQL and MariaDB:
+Ask the DBA for the database and two dedicated users with the minimum privileges.
+The same script works on MySQL and MariaDB:
 
 ```sql
-CREATE DATABASE ril CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE `rag-interaction-logger-db`
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- Cheshire Cat AI plugin: create and write ril_interactions.
 CREATE USER 'ril_logger'@'%' IDENTIFIED BY '<password>' REQUIRE SSL;
-GRANT CREATE, INSERT, UPDATE, SELECT, DELETE ON ril.* TO 'ril_logger'@'%';
--- the plugin must be reported as mysql_native_password
+GRANT CREATE, INSERT, UPDATE, SELECT, DELETE
+  ON `rag-interaction-logger-db`.ril_interactions TO 'ril_logger'@'%';
+```
+
+Create the table before granting the WordPress monitor access:
+
+```sql
+CREATE TABLE IF NOT EXISTS ril_interactions (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ ts DATETIME(3) NOT NULL,
+ duration_ms INT UNSIGNED NULL,
+ instance VARCHAR(255) NOT NULL,
+ user_id VARCHAR(255) NOT NULL,
+ turn_id VARCHAR(32) NULL,
+ outcome ENUM('generated','fast_reply','incomplete') NOT NULL,
+ question MEDIUMTEXT NULL,
+ llm_answer MEDIUMTEXT NULL,
+ delivered MEDIUMTEXT NULL,
+ guard_present BOOLEAN NOT NULL,
+ input_verdict VARCHAR(64) NULL,
+ output_verdict VARCHAR(64) NULL,
+ other_plugin_reply BOOLEAN NULL,
+ recall_count SMALLINT UNSIGNED NULL,
+ recall_top_score FLOAT NULL,
+ tools_used VARCHAR(255) NULL,
+ tool_input MEDIUMTEXT NULL,
+ tool_output MEDIUMTEXT NULL,
+ recall_sources TEXT NULL,
+ KEY idx_ts (ts),
+ KEY idx_user_ts (user_id, ts),
+ KEY idx_input_verdict (input_verdict),
+ KEY idx_output_verdict (output_verdict)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+```sql
+-- WordPress monitor plugin: read ril_interactions only.
+CREATE USER 'ril_monitor'@'%' IDENTIFIED BY '<password>' REQUIRE SSL;
+GRANT SELECT
+  ON `rag-interaction-logger-db`.ril_interactions TO 'ril_monitor'@'%';
+
+-- Both users must be reported as mysql_native_password.
 SELECT user, host, plugin FROM mysql.user WHERE user = 'ril_logger';
+SELECT user, host, plugin FROM mysql.user WHERE user = 'ril_monitor';
 ```
 
 - `CREATE` is needed only when `create_table` is on. `UPDATE` finalizes each initial
@@ -61,6 +105,14 @@ SELECT user, host, plugin FROM mysql.user WHERE user = 'ril_logger';
   also used by the connection check.
 - Drop `REQUIRE SSL` only for a local development server without TLS, and then turn
   `db_require_ssl` off in the plugin settings.
+
+If a `SELECT` above shows a plugin other than `mysql_native_password` (a MySQL server
+whose default is `caching_sha2_password`), change it on **MySQL only**; MariaDB rejects
+this syntax and already uses `mysql_native_password` by default:
+
+```sql
+ALTER USER 'ril_logger'@'%' IDENTIFIED WITH mysql_native_password BY '<password>';
+```
 
 ## Settings
 
@@ -104,7 +156,7 @@ port, never the password or the driver's text. Common codes:
 | `1045` | Wrong user or password |
 | `1044`, `1142` | A privilege is missing (for example `UPDATE`) |
 | `1049` | The database does not exist |
-| `1054` | A column is missing: the table predates a plugin update, see below |
+| `1054` | A column is missing: the table differs from the one in [The table](#the-table); add the missing column |
 | `1146` | The table does not exist and `create_table` is off |
 | `2003` | The server cannot be reached |
 | `2026` | TLS is required but the server does not offer it |
@@ -153,37 +205,6 @@ columns are:
 | `tools_used` | Comma-separated names of the tools and forms that ran. |
 | `tool_input`, `tool_output` | JSON arrays, only with the options on. |
 | `recall_sources` | JSON array of `{id, source, score}`, never the text. |
-
-The plugin creates it when `create_table` is on. To create it by hand, run:
-
-```sql
-CREATE TABLE IF NOT EXISTS ril_interactions (
- id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
- ts DATETIME(3) NOT NULL,
- duration_ms INT UNSIGNED NULL,
- instance VARCHAR(255) NOT NULL,
- user_id VARCHAR(255) NOT NULL,
- turn_id VARCHAR(32) NULL,
- outcome ENUM('generated','fast_reply','incomplete') NOT NULL,
- question MEDIUMTEXT NULL,
- llm_answer MEDIUMTEXT NULL,
- delivered MEDIUMTEXT NULL,
- guard_present BOOLEAN NOT NULL,
- input_verdict VARCHAR(64) NULL,
- output_verdict VARCHAR(64) NULL,
- other_plugin_reply BOOLEAN NULL,
- recall_count SMALLINT UNSIGNED NULL,
- recall_top_score FLOAT NULL,
- tools_used VARCHAR(255) NULL,
- tool_input MEDIUMTEXT NULL,
- tool_output MEDIUMTEXT NULL,
- recall_sources TEXT NULL,
- KEY idx_ts (ts),
- KEY idx_user_ts (user_id, ts),
- KEY idx_input_verdict (input_verdict),
- KEY idx_output_verdict (output_verdict)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
 
 ### Personal data
 
