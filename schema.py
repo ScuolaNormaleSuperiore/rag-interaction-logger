@@ -8,9 +8,9 @@ from datetime import datetime, timedelta, timezone
 # relative import is the one that works at runtime; the absolute fallback is for
 # the tests, which put the plugin folder on the path.
 try:
-    from .record import InteractionRecord
+    from .record import TOOLS_USED_WIDTH, InteractionRecord
 except ImportError:  # pragma: no cover - depends on how the module is loaded
-    from record import InteractionRecord
+    from record import TOOLS_USED_WIDTH, InteractionRecord
 
 
 TABLE = "ril_interactions"
@@ -31,6 +31,10 @@ COLUMNS = (
     "other_plugin_reply",
     "recall_count",
     "recall_top_score",
+    "tools_used",
+    "tool_input",
+    "tool_output",
+    "recall_sources",
 )
 
 UPDATE_COLUMNS = (
@@ -45,7 +49,16 @@ UPDATE_COLUMNS = (
     "other_plugin_reply",
     "recall_count",
     "recall_top_score",
+    "tools_used",
+    "tool_input",
+    "tool_output",
+    "recall_sources",
 )
+
+TOOL_INPUT_ROW_INDEX = COLUMNS.index("tool_input")
+TOOL_INPUT_UPDATE_INDEX = UPDATE_COLUMNS.index("tool_input")
+TOOL_OUTPUT_ROW_INDEX = COLUMNS.index("tool_output")
+TOOL_OUTPUT_UPDATE_INDEX = UPDATE_COLUMNS.index("tool_output")
 
 INSTANCE_WIDTH = USER_ID_WIDTH = 255
 TURN_ID_WIDTH = 32
@@ -68,6 +81,10 @@ CREATE_TABLE_SQL = f"""CREATE TABLE IF NOT EXISTS {TABLE} (
  other_plugin_reply BOOLEAN NULL,
  recall_count SMALLINT UNSIGNED NULL,
  recall_top_score FLOAT NULL,
+ tools_used VARCHAR({TOOLS_USED_WIDTH}) NULL,
+ tool_input MEDIUMTEXT NULL,
+ tool_output MEDIUMTEXT NULL,
+ recall_sources TEXT NULL,
  KEY idx_ts (ts),
  KEY idx_user_ts (user_id, ts),
  KEY idx_input_verdict (input_verdict),
@@ -115,6 +132,10 @@ def to_row(record: InteractionRecord) -> tuple:
         "other_plugin_reply": record.other_plugin_reply,
         "recall_count": record.recall_count,
         "recall_top_score": record.recall_top_score,
+        "tools_used": record.tools_used,
+        "tool_input": record.tool_input,
+        "tool_output": record.tool_output,
+        "recall_sources": record.recall_sources,
     }
     return tuple(values[column] for column in COLUMNS)
 
@@ -123,6 +144,11 @@ def to_update_params(record: InteractionRecord, row_id: int) -> tuple:
     """Return the parameters of `UPDATE_SQL`: the finalisation fields, then the id."""
     row = dict(zip(COLUMNS, to_row(record), strict=True))
     return (*[row[column] for column in UPDATE_COLUMNS], row_id)
+
+
+def blank_at(values: tuple, index: int) -> tuple:
+    """Return `values` with one position emptied, for a column that is not to be saved."""
+    return values[:index] + (None,) + values[index + 1 :]
 
 
 def retention_cutoff(now: datetime, days: int) -> datetime | None:

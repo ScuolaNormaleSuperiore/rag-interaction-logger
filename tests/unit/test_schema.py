@@ -26,8 +26,13 @@ from schema import (
     SELECT_ID_SQL,
     START_TRANSACTION_SQL,
     TLS_CIPHER_SQL,
+    TOOL_INPUT_ROW_INDEX,
+    TOOL_INPUT_UPDATE_INDEX,
+    TOOL_OUTPUT_ROW_INDEX,
+    TOOL_OUTPUT_UPDATE_INDEX,
     UPDATE_COLUMNS,
     UPDATE_SQL,
+    blank_at,
     retention_cutoff,
     to_row,
     to_update_params,
@@ -80,7 +85,7 @@ def test_create_table_is_idempotent_and_uses_the_portable_collation():
 
 
 def test_create_table_declares_every_column_in_the_insert_order():
-    declared = re.findall(r"^\s+(\w+)\s+(?:BIGINT|DATETIME|INT|VARCHAR|ENUM|MEDIUMTEXT|BOOLEAN|SMALLINT|FLOAT)\b",
+    declared = re.findall(r"^\s+(\w+)\s+(?:BIGINT|DATETIME|INT|VARCHAR|ENUM|MEDIUMTEXT|TEXT|BOOLEAN|SMALLINT|FLOAT)\b",
                           CREATE_TABLE_SQL, flags=re.MULTILINE)
 
     assert declared == ["id", *COLUMNS]
@@ -97,7 +102,47 @@ def test_columns_match_the_record_fields_that_belong_in_the_table():
     record_fields = {field.name for field in fields(InteractionRecord)}
 
     assert set(COLUMNS) == record_fields - record_only
-    assert len(COLUMNS) == 15
+    assert len(COLUMNS) == 19
+
+
+def test_tool_and_recall_columns_come_last_in_the_table_the_insert_and_the_update():
+    added = ("tools_used", "tool_input", "tool_output", "recall_sources")
+
+    assert COLUMNS[-4:] == added
+    assert set(added) <= set(UPDATE_COLUMNS)
+    assert "tools_used VARCHAR(255) NULL," in CREATE_TABLE_SQL
+    assert "tool_input MEDIUMTEXT NULL," in CREATE_TABLE_SQL
+    assert "tool_output MEDIUMTEXT NULL," in CREATE_TABLE_SQL
+    assert "recall_sources TEXT NULL," in CREATE_TABLE_SQL
+    positions = [CREATE_TABLE_SQL.index(name) for name in ("recall_top_score", *added)]
+    assert positions == sorted(positions)
+
+
+def test_to_row_carries_the_tool_names():
+    record = capture_generated(started(), "a", [], [(("get_time", {}), "12:00")])
+
+    assert dict(zip(COLUMNS, to_row(record), strict=True))["tools_used"] == "get_time"
+    assert dict(zip(COLUMNS, to_row(started()), strict=True))["tools_used"] is None
+
+
+def test_blank_at_empties_only_the_chosen_value_in_a_row_and_in_the_update_values():
+    record = capture_generated(started(), "a", [], [(("get_time", "Europe/Rome"), "12:00")])
+    row = to_row(record)
+    update_values = to_update_params(record, 5)[:-1]
+
+    for row_index, update_index, column in (
+        (TOOL_INPUT_ROW_INDEX, TOOL_INPUT_UPDATE_INDEX, "tool_input"),
+        (TOOL_OUTPUT_ROW_INDEX, TOOL_OUTPUT_UPDATE_INDEX, "tool_output"),
+    ):
+        without_row = blank_at(row, row_index)
+        without_update = blank_at(update_values, update_index)
+
+        assert row[row_index] is not None
+        assert without_row[row_index] is None
+        assert [a for a, b in zip(row, without_row) if a != b] == [row[row_index]]
+        assert without_update[update_index] is None
+        assert len(without_row) == len(row) and len(without_update) == len(update_values)
+        assert UPDATE_COLUMNS[update_index] == COLUMNS[row_index] == column
 
 
 def test_insert_names_every_column_with_one_placeholder_each():

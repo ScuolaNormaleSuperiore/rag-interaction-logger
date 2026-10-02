@@ -20,21 +20,33 @@ try:
     from .schema import (
         INSERT_SQL,
         PURGE_SQL,
+        TOOL_INPUT_ROW_INDEX,
+        TOOL_INPUT_UPDATE_INDEX,
+        TOOL_OUTPUT_ROW_INDEX,
+        TOOL_OUTPUT_UPDATE_INDEX,
         UPDATE_SQL,
+        blank_at,
         retention_cutoff,
         to_row,
         to_update_params,
     )
+    from .record import TOOL_TEXT_LIMIT, tool_text_limit_from
 except ImportError:  # pragma: no cover - depends on how the module is loaded
     from db import ConnectionConfig, open_connection, safe_error
     from schema import (
         INSERT_SQL,
         PURGE_SQL,
+        TOOL_INPUT_ROW_INDEX,
+        TOOL_INPUT_UPDATE_INDEX,
+        TOOL_OUTPUT_ROW_INDEX,
+        TOOL_OUTPUT_UPDATE_INDEX,
         UPDATE_SQL,
+        blank_at,
         retention_cutoff,
         to_row,
         to_update_params,
     )
+    from record import TOOL_TEXT_LIMIT, tool_text_limit_from
 
 
 PREFIX = "RAG Interaction Logger: "
@@ -85,6 +97,7 @@ class Writer:
         self._disabled_noted = False
         self._next_purge_check = 0.0
         self._purge_cutoff: datetime | None = None
+        self._tool_text_limit = TOOL_TEXT_LIMIT
 
     # -- called from the hooks: never block, never raise ---------------------
 
@@ -119,7 +132,9 @@ class Writer:
 
     def prepare(self) -> None:
         """Create the queue, sized from the settings at this moment."""
-        self._queue = queue.Queue(maxsize=self._configured_queue_size())
+        settings = self._safe_settings()
+        self._remember_tool_text_limit(settings)
+        self._queue = queue.Queue(maxsize=self._queue_size_from(settings))
 
     def start(self) -> bool:
         """Start the worker; return False if one is already running."""
@@ -146,6 +161,16 @@ class Writer:
     @property
     def queue_capacity(self) -> int:
         return self._queue.maxsize if self._queue is not None else 0
+
+    @property
+    def tool_text_limit(self) -> int:
+        """Longest tool input or output to keep, as the worker last read it.
+
+        The hooks cannot read the settings (no I/O in a turn), so they take the
+        value the worker keeps current: it reads the settings for the start event,
+        which is queued long before the answer is captured.
+        """
+        return self._tool_text_limit
 
     @property
     def pending_count(self) -> int:
@@ -178,7 +203,8 @@ class Writer:
 
     def _handle(self, event: Event) -> None:
         try:
-            config = ConnectionConfig.from_settings(self._load_settings())
+            settings = self._load_settings()
+            config = ConnectionConfig.from_settings(settings)
         except Exception as error:
             self._fail("settings", event.turn_id, error, None)
             return
@@ -188,6 +214,19 @@ class Writer:
                 self._disabled_noted = True
             return
         self._disabled_noted = False
+        self._remember_tool_text_limit(settings)
+        row, update_values = event.row, event.update_values
+        # Tool inputs and outputs can hold personal data and no guard checks them:
+        # each is saved only on request, decided here with the settings as they are
+        # when the row is written.
+        for option, row_index, update_index in (
+            ("log_tool_input", TOOL_INPUT_ROW_INDEX, TOOL_INPUT_UPDATE_INDEX),
+            ("log_tool_output", TOOL_OUTPUT_ROW_INDEX, TOOL_OUTPUT_UPDATE_INDEX),
+        ):
+            if settings.get(option) is not True:
+                row = blank_at(row, row_index)
+                if update_values:
+                    update_values = blank_at(update_values, update_index)
         operation = "insert"
         try:
             connection = self._connection_for(config)
@@ -196,15 +235,15 @@ class Writer:
             cursor = connection.cursor()
             try:
                 if event.kind == "start":
-                    cursor.execute(INSERT_SQL, event.row)
+                    cursor.execute(INSERT_SQL, row)
                     if cursor.lastrowid:
                         self._ids[event.key] = (cursor.lastrowid, now)
                 elif event.key in self._ids:
                     operation = "update"
                     row_id, _ = self._ids.pop(event.key)
-                    cursor.execute(UPDATE_SQL, (*event.update_values, row_id))
+                    cursor.execute(UPDATE_SQL, (*update_values, row_id))
                 else:
-                    cursor.execute(INSERT_SQL, event.row)
+                    cursor.execute(INSERT_SQL, row)
             finally:
                 cursor.close()
             self._succeeded()
@@ -213,8 +252,13 @@ class Writer:
 
     def _connection_for(self, config: ConnectionConfig):
         if self._connection is not None and self._config == config:
-            self._connection.ping(reconnect=True)
-            return self._connection
+            try:
+                # The driver's own `reconnect` is deprecated since 1.2 and its default
+                # changed between versions: a dropped connection is replaced here.
+                self._connection.ping(reconnect=False)
+                return self._connection
+            except Exception:
+                pass
         self._close_connection()
         self._connection = open_connection(
             config, self._connect, warn=lambda message: self._warn(message)
@@ -329,8 +373,19 @@ class Writer:
     def _info(self, message: str) -> None:
         self._log.info(f"{PREFIX}{message}")
 
-    def _configured_queue_size(self) -> int:
+    def _safe_settings(self) -> dict:
         try:
-            return max(1, int(self._load_settings().get("queue_size") or DEFAULT_QUEUE_SIZE))
+            settings = self._load_settings()
         except Exception:
+            return {}
+        return settings if isinstance(settings, dict) else {}
+
+    def _remember_tool_text_limit(self, settings: dict) -> None:
+        self._tool_text_limit = tool_text_limit_from(settings)
+
+    @staticmethod
+    def _queue_size_from(settings: dict) -> int:
+        try:
+            return max(1, int(settings.get("queue_size") or DEFAULT_QUEUE_SIZE))
+        except (TypeError, ValueError):
             return DEFAULT_QUEUE_SIZE

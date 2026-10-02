@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime
+
+
+TOOLS_USED_WIDTH = 255
+TOOL_TEXT_LIMIT = 1000
+TOOL_TEXT_LIMIT_MIN = 100
+TOOL_TEXT_LIMIT_MAX = 10000
+TOOL_CALLS_MAX = 10
+RECALL_SOURCES_MAX = 20
+RECALL_SOURCE_LIMIT = 200
+RECALL_ID_LIMIT = 64
 
 
 @dataclass(slots=True)
@@ -26,6 +37,10 @@ class InteractionRecord:
     other_plugin_reply: bool | None = None
     recall_count: int | None = None
     recall_top_score: float | None = None
+    tools_used: str | None = None
+    tool_input: str | None = None
+    tool_output: str | None = None
+    recall_sources: str | None = None
     duration_ms: int | None = None
     outcome: str = "incomplete"
 
@@ -72,11 +87,28 @@ def resolve_turn(record: InteractionRecord, guard_turn_id: str | None) -> Intera
 
 
 def capture_generated(
-    record: InteractionRecord, text: str | None, declarative: list | None
+    record: InteractionRecord,
+    text: str | None,
+    declarative: list | None,
+    steps=None,
+    tool_limit: int = TOOL_TEXT_LIMIT,
 ) -> InteractionRecord:
-    """Store the LLM answer and the recall summary before any rewrite (H3)."""
+    """Store the LLM answer, the recall and the tools that ran (H3).
+
+    `declarative` is `why.memory["declarative"]` and `steps` is
+    `why.intermediate_steps`; without them the matching columns stay empty.
+    `tool_limit` is the longest tool input or output kept, in characters.
+    """
+    calls = tool_calls(steps)
+    found = {
+        "llm_answer": text,
+        "tools_used": join_tools([name.replace(",", "_") for name, _, _ in calls]),
+        "tool_input": tool_texts_json(calls, "input", tool_limit),
+        "tool_output": tool_texts_json(calls, "output", tool_limit),
+        "recall_sources": recall_sources_json(declarative),
+    }
     if declarative is None:
-        return replace(record, llm_answer=text)
+        return replace(record, **found)
     scores = [
         entry["score"]
         for entry in declarative
@@ -84,10 +116,107 @@ def capture_generated(
     ]
     return replace(
         record,
-        llm_answer=text,
         recall_count=len(declarative),
         recall_top_score=max(scores) if scores else None,
+        **found,
     )
+
+
+def tool_text_limit_from(settings: dict) -> int:
+    """Read `tool_text_limit` from the settings, kept inside its allowed range."""
+    try:
+        value = int(settings.get("tool_text_limit"))
+    except (TypeError, ValueError, AttributeError):
+        return TOOL_TEXT_LIMIT
+    return max(TOOL_TEXT_LIMIT_MIN, min(TOOL_TEXT_LIMIT_MAX, value))
+
+
+def tool_calls(steps) -> list[tuple[str, str, str]]:
+    """Return `(name, input, output)` for each tool or form that ran, in order.
+
+    Each step of `why.intermediate_steps` is `((name, input), output)`. Anything
+    that is not a step with a name is ignored.
+    """
+    if not isinstance(steps, (list, tuple)):
+        return []
+    calls = []
+    for step in steps:
+        parts = _step_parts(step)
+        if parts is not None:
+            calls.append(parts)
+    return calls
+
+
+def tool_names(steps) -> list[str]:
+    """Return only the names, with a comma replaced so the list stays parsable."""
+    return [name.replace(",", "_") for name, _, _ in tool_calls(steps)]
+
+
+def join_tools(names: list[str], width: int = TOOLS_USED_WIDTH) -> str | None:
+    """Join the names with commas, keeping only whole names that fit the column."""
+    kept: list[str] = []
+    length = 0
+    for name in names:
+        extra = len(name) + (1 if kept else 0)
+        if length + extra > width:
+            break
+        kept.append(name)
+        length += extra
+    return ",".join(kept) or None
+
+
+def tool_texts_json(
+    calls: list[tuple[str, str, str]], field: str, limit: int = TOOL_TEXT_LIMIT
+) -> str | None:
+    """Return the `input` or `output` of each call as a JSON array text, or None.
+
+    One object per call, `{"tool": name, field: text}`, at most `TOOL_CALLS_MAX`.
+    A text longer than `limit` is cut *before* the array is built, so the result
+    is always valid JSON, and the object also carries `"cut":true` and the
+    original length as `"chars"`.
+    """
+    if not calls or field not in ("input", "output"):
+        return None
+    column = 1 if field == "input" else 2
+    items = []
+    for call in calls[:TOOL_CALLS_MAX]:
+        text = call[column]
+        item = {"tool": call[0], field: text[:limit]}
+        if len(text) > limit:
+            item["cut"] = True
+            item["chars"] = len(text)
+        items.append(item)
+    return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+
+
+def tool_input_json(calls: list[tuple[str, str, str]], limit: int = TOOL_TEXT_LIMIT) -> str | None:
+    return tool_texts_json(calls, "input", limit)
+
+
+def tool_output_json(calls: list[tuple[str, str, str]], limit: int = TOOL_TEXT_LIMIT) -> str | None:
+    return tool_texts_json(calls, "output", limit)
+
+
+def recall_sources_json(declarative) -> str | None:
+    """Return id, source and score of each recalled document as a JSON array text.
+
+    The document text is never read. `source` is the file name or URL the Cat
+    stored with the document. At most `RECALL_SOURCES_MAX` entries; each `source`
+    is cut to `RECALL_SOURCE_LIMIT` characters (with `"cut":true`) before the
+    array is built. None when nothing was recalled.
+    """
+    if not isinstance(declarative, (list, tuple)):
+        return None
+    items = []
+    for entry in declarative:
+        item = _recall_item(entry)
+        if item is not None:
+            items.append(item)
+        if len(items) == RECALL_SOURCES_MAX:
+            break
+    if not items:
+        return None
+    return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
 
 def finalize_fast_reply(
@@ -129,6 +258,55 @@ def extract_reply_text(value) -> str | None:
         return str(value["output"]) if "output" in value else None
     text = getattr(value, "text", None)
     return text if isinstance(text, str) else None
+
+
+def _step_parts(step) -> tuple[str, str, str] | None:
+    try:
+        action = step[0]
+        if isinstance(action, (list, tuple)):
+            name, raw = action[0], (action[1] if len(action) > 1 else "")
+        elif isinstance(action, dict):
+            name, raw = action.get("tool"), action.get("tool_input", "")
+        else:
+            name, raw = getattr(action, "tool", None), getattr(action, "tool_input", "")
+        output = step[1] if len(step) > 1 else ""
+    except (TypeError, IndexError, KeyError):
+        return None
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name.strip(), _as_text(raw), _as_text(output)
+
+
+def _recall_item(entry) -> dict | None:
+    if not isinstance(entry, dict):
+        return None
+    item: dict = {}
+    identifier = entry.get("id")
+    if identifier is not None and str(identifier):
+        item["id"] = str(identifier)[:RECALL_ID_LIMIT]
+    metadata = entry.get("metadata")
+    source = metadata.get("source") if isinstance(metadata, dict) else None
+    cut = isinstance(source, str) and len(source) > RECALL_SOURCE_LIMIT
+    if isinstance(source, str) and source:
+        item["source"] = source[:RECALL_SOURCE_LIMIT]
+    if not item:
+        return None
+    score = entry.get("score")
+    if isinstance(score, (int, float)) and not isinstance(score, bool):
+        item["score"] = round(float(score), 6)
+    if cut:
+        item["cut"] = True
+    return item
+
+
+def _as_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return str(value)
 
 
 def _duration_ms(record: InteractionRecord, now_ns: int) -> int:

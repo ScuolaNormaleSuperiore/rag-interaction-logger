@@ -11,8 +11,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import writer as writer_module
-from record import finalize_fast_reply, finalize_generated, resolve_turn, start_record
-from schema import INSERT_SQL, PURGE_SQL, UPDATE_SQL
+from record import capture_generated, finalize_fast_reply, finalize_generated, resolve_turn, start_record
+from schema import COLUMNS, INSERT_SQL, PURGE_SQL, UPDATE_COLUMNS, UPDATE_SQL
 from writer import Writer
 
 
@@ -28,6 +28,9 @@ SETTINGS = {
     "create_table": False,
     "queue_size": 1000,
     "retention_days": 0,
+    "log_tool_input": False,
+    "log_tool_output": False,
+    "tool_text_limit": 1000,
 }
 
 
@@ -66,13 +69,17 @@ class FakeConnection:
         self.next_id = 100
         self.purge_results = []
         self.pings = 0
+        self.ping_fails = False
         self.closed_in = []
 
     def cursor(self):
         return FakeCursor(self)
 
     def ping(self, reconnect=False):
+        assert reconnect is False, "the deprecated reconnect argument must not be used"
         self.pings += 1
+        if self.ping_fails:
+            raise OperationalError(2006, "server has gone away")
 
     def close(self):
         self.closed_in.append(threading.current_thread().name)
@@ -272,6 +279,125 @@ def test_a_changed_configuration_reconnects_without_restarting(harness):
     assert len(second_connection.of(INSERT_SQL)) == 1
 
 
+TOOL_STEPS = [(("get_time", "Europe/Rome"), "tool output")]
+
+
+def with_tool(record):
+    return capture_generated(record, "answer", [], TOOL_STEPS)
+
+
+def tool_input_of_insert(connection, index=-1):
+    return connection.of(INSERT_SQL)[index][COLUMNS.index("tool_input")]
+
+
+def tool_input_of_update(connection):
+    return connection.of(UPDATE_SQL)[0][UPDATE_COLUMNS.index("tool_input")]
+
+
+def test_the_tool_name_is_always_saved_and_the_input_only_when_asked():
+    off, on = Harness(), Harness({"log_tool_input": True})
+    for harness in (off, on):
+        record = with_tool(turn())
+        harness.writer.submit_start(turn())
+        harness.writer.submit_finish(finished(record))
+        harness.pump()
+
+    for harness in (off, on):
+        (update,) = harness.connection.of(UPDATE_SQL)
+        assert update[UPDATE_COLUMNS.index("tools_used")] == "get_time"
+    assert tool_input_of_update(off.connection) is None
+    assert '"input":"Europe/Rome"' in tool_input_of_update(on.connection)
+    assert "tool output" not in tool_input_of_update(on.connection)
+
+
+def test_the_input_is_dropped_from_a_full_insert_too_unless_asked():
+    off, on = Harness(), Harness({"log_tool_input": True})
+    for harness in (off, on):
+        harness.writer.submit_finish(finished(with_tool(turn())))
+        harness.pump()
+
+    assert tool_input_of_insert(off.connection) is None
+    assert '"tool":"get_time"' in tool_input_of_insert(on.connection)
+
+
+def test_the_option_is_read_when_the_row_is_written_so_a_change_applies_at_once():
+    harness = Harness()
+    first = with_tool(turn("1" * 32))
+    harness.writer.submit_finish(finished(first))
+    harness.pump()
+    harness.settings["log_tool_input"] = True
+    second = with_tool(turn("2" * 32))
+    harness.writer.submit_finish(finished(second))
+    harness.pump()
+
+    assert tool_input_of_insert(harness.connection, 0) is None
+    assert tool_input_of_insert(harness.connection, 1) is not None
+
+
+def column_of_update(connection, column):
+    return connection.of(UPDATE_SQL)[0][UPDATE_COLUMNS.index(column)]
+
+
+def test_the_tool_output_is_saved_only_when_asked_independently_of_the_input():
+    cases = {
+        (False, False): (None, None),
+        (True, False): ("input", None),
+        (False, True): (None, "output"),
+        (True, True): ("input", "output"),
+    }
+    for (log_input, log_output), (want_input, want_output) in cases.items():
+        harness = Harness({"log_tool_input": log_input, "log_tool_output": log_output})
+        record = with_tool(turn())
+        harness.writer.submit_start(turn())
+        harness.writer.submit_finish(finished(record))
+        harness.pump()
+
+        got_input = column_of_update(harness.connection, "tool_input")
+        got_output = column_of_update(harness.connection, "tool_output")
+        assert (got_input is not None, got_output is not None) == (want_input is not None, want_output is not None)
+        if got_output:
+            assert '"output":"tool output"' in got_output and "Europe/Rome" not in got_output
+
+
+def test_the_tool_output_is_dropped_from_a_full_insert_too_unless_asked():
+    off, on = Harness(), Harness({"log_tool_output": True})
+    for harness in (off, on):
+        harness.writer.submit_finish(finished(with_tool(turn())))
+        harness.pump()
+
+    assert off.connection.of(INSERT_SQL)[-1][COLUMNS.index("tool_output")] is None
+    assert '"tool":"get_time"' in on.connection.of(INSERT_SQL)[-1][COLUMNS.index("tool_output")]
+
+
+def test_the_recall_sources_are_always_saved():
+    harness = Harness()
+    record = capture_generated(turn(), "a", [{"id": "p1", "score": 0.8, "metadata": {"source": "guide.pdf"}}])
+    harness.writer.submit_finish(finished(record))
+    harness.pump()
+
+    assert '"source":"guide.pdf"' in harness.connection.of(INSERT_SQL)[-1][COLUMNS.index("recall_sources")]
+
+
+def test_the_tool_text_limit_follows_the_settings_the_worker_reads():
+    harness = Harness()
+    assert harness.writer.tool_text_limit == 1000
+
+    harness.settings["tool_text_limit"] = 250
+    harness.writer.submit_start(turn("1" * 32))
+    harness.pump()
+    assert harness.writer.tool_text_limit == 250
+
+    for bad, expected in ((5, 100), (999999, 10000), ("abc", 1000), (None, 1000)):
+        harness.settings["tool_text_limit"] = bad
+        harness.writer.submit_start(turn("2" * 32))
+        harness.pump()
+        assert harness.writer.tool_text_limit == expected
+
+
+def test_the_tool_text_limit_is_known_before_the_first_event():
+    assert Harness({"tool_text_limit": 400}).writer.tool_text_limit == 400
+
+
 def test_the_connection_is_reused_and_pinged_before_each_operation(harness):
     for index in range(3):
         harness.writer.submit_start(turn(str(index) * 32))
@@ -280,6 +406,23 @@ def test_the_connection_is_reused_and_pinged_before_each_operation(harness):
 
     assert len(harness.connect_calls) == 1
     assert harness.connection.pings == 2
+
+
+def test_a_dropped_connection_is_replaced_without_losing_the_event():
+    first, second = FakeConnection(), FakeConnection()
+    harness = Harness(connection=first)
+    harness.connections.append(second)
+    harness.writer.submit_start(turn("1" * 32))
+    harness.pump()
+    first.ping_fails = True
+
+    harness.writer.submit_start(turn("2" * 32))
+    harness.pump()
+
+    assert len(harness.connect_calls) == 2
+    assert first.closed_in and len(first.of(INSERT_SQL)) == 1
+    assert len(second.of(INSERT_SQL)) == 1
+    assert not harness.log.text("warning")
 
 
 def test_a_disabled_logger_drops_events_and_says_so_once(harness):

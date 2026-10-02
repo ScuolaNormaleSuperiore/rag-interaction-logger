@@ -39,6 +39,26 @@ class RagInteractionLoggerSettings(BaseModel):
         default=True,
         description="Require TLS to the database. Disable only for local development.",
     )
+    log_tool_input: bool = Field(
+        default=False,
+        description=(
+            "Also save the input the LLM gives to each tool. It is free text that "
+            "no guard checks and may contain personal data."
+        ),
+    )
+    log_tool_output: bool = Field(
+        default=False,
+        description=(
+            "Also save the text each tool returns. It comes from systems the logger "
+            "does not know, no guard checks it, and it may contain personal data."
+        ),
+    )
+    tool_text_limit: int = Field(
+        default=1000,
+        ge=100,
+        le=10000,
+        description="Longest tool input or output saved, in characters; longer text is cut.",
+    )
     create_table: bool = Field(
         default=True,
         description="Create ril_interactions when it is missing.",

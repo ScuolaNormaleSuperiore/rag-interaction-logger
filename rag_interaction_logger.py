@@ -18,6 +18,7 @@ from cat.mad_hatter.decorators import hook, plugin
 # the tests, which put the plugin folder on the path.
 try:
     from .record import (
+        TOOL_TEXT_LIMIT,
         capture_generated,
         extract_reply_text,
         finalize_fast_reply,
@@ -28,6 +29,7 @@ try:
     from .writer import Writer
 except ImportError:  # pragma: no cover - depends on how the module is loaded
     from record import (
+        TOOL_TEXT_LIMIT,
         capture_generated,
         extract_reply_text,
         finalize_fast_reply,
@@ -127,7 +129,13 @@ def capture_generated_answer(message, cat):
         setattr(
             memory,
             RECORD_ATTRIBUTE,
-            capture_generated(record, _text_of(message), _declarative_recall(message)),
+            capture_generated(
+                record,
+                _text_of(message),
+                _declarative_recall(message),
+                _intermediate_steps(message),
+                getattr(_writer, "tool_text_limit", TOOL_TEXT_LIMIT),
+            ),
         )
     except Exception as error:
         _hook_failed("before_cat_sends_message capture", error, record)
@@ -182,6 +190,12 @@ def _declarative_recall(message) -> list | None:
     memory = why.get("memory") if isinstance(why, dict) else getattr(why, "memory", None)
     recall = memory.get("declarative") if isinstance(memory, dict) else None
     return recall if isinstance(recall, list) else None
+
+
+def _intermediate_steps(message) -> list | None:
+    why = getattr(message, "why", None)
+    steps = why.get("intermediate_steps") if isinstance(why, dict) else getattr(why, "intermediate_steps", None)
+    return steps if isinstance(steps, (list, tuple)) else None
 
 
 def _hook_failed(name: str, error: Exception, record=None) -> None:

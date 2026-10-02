@@ -7,6 +7,7 @@ and H4.
 """
 
 import copy
+import json
 from pathlib import Path
 import pickle
 import re
@@ -122,6 +123,129 @@ def test_generated_turn_passed_by_the_guard():
     assert (record.recall_count, record.recall_top_score) == (2, 0.84)
     assert record.output_verdict is None and record.other_plugin_reply is False
     assert cat.working_memory.ril_record is None
+
+
+def message_with_steps(steps, text="Tool answer"):
+    why = SimpleNamespace(memory={"declarative": []}, intermediate_steps=steps)
+    return SimpleNamespace(text=text, why=why)
+
+
+def test_the_tool_that_ran_is_recorded_with_its_name_input_and_output():
+    cat = make_cat("What time is it?")
+    run_start(cat)
+    run_fast_reply_end(cat, {})
+    steps = [(("get_time", {"zone": "secret-zone"}), "tool output with data")]
+
+    run_capture(cat, message_with_steps(steps))
+    run_finish(cat, message_with_steps(steps))
+
+    (record,) = logger._writer.finishes()
+    assert record.tools_used == "get_time"
+    assert json.loads(record.tool_input)[0]["tool"] == "get_time"
+    assert "secret-zone" in record.tool_input
+    assert json.loads(record.tool_output)[0] == {"tool": "get_time", "output": "tool output with data"}
+
+
+def test_the_tool_output_is_captured_next_to_the_input():
+    cat = make_cat()
+    run_start(cat)
+    steps = [(("get_time", "Europe/Rome"), "Sono le 12:00")]
+    run_capture(cat, message_with_steps(steps))
+    run_finish(cat, message_with_steps(steps))
+
+    record = logger._writer.finishes()[0]
+    assert json.loads(record.tool_output) == [{"tool": "get_time", "output": "Sono le 12:00"}]
+    assert json.loads(record.tool_input) == [{"tool": "get_time", "input": "Europe/Rome"}]
+
+
+def test_the_hook_cuts_tool_texts_at_the_limit_the_writer_reports():
+    logger._writer.tool_text_limit = 120
+    cat = make_cat()
+    run_start(cat)
+    steps = [(("lookup", "x" * 500), "y" * 500)]
+    run_capture(cat, message_with_steps(steps))
+    run_finish(cat, message_with_steps(steps))
+
+    record = logger._writer.finishes()[0]
+    item_in = json.loads(record.tool_input)[0]
+    item_out = json.loads(record.tool_output)[0]
+    assert len(item_in["input"]) == 120 and item_in["cut"] is True and item_in["chars"] == 500
+    assert len(item_out["output"]) == 120 and item_out["cut"] is True and item_out["chars"] == 500
+
+
+def test_the_recalled_documents_are_recorded_by_id_source_and_score_but_never_their_text():
+    cat = make_cat()
+    run_start(cat)
+    documents = [
+        {"id": "p-1", "score": 0.834, "page_content": "TEXT OF THE DOCUMENT", "metadata": {"source": "guida_badge.pdf", "when": 1}},
+        {"id": 7, "score": 0.79, "page_content": "OTHER TEXT", "metadata": {"source": "https://example.org/a"}},
+    ]
+    message = SimpleNamespace(text="a", why=SimpleNamespace(memory={"declarative": documents}))
+    run_capture(cat, message)
+    run_finish(cat, message)
+
+    record = logger._writer.finishes()[0]
+    assert json.loads(record.recall_sources) == [
+        {"id": "p-1", "source": "guida_badge.pdf", "score": 0.834},
+        {"id": "7", "source": "https://example.org/a", "score": 0.79},
+    ]
+    assert "TEXT" not in record.recall_sources
+    assert record.recall_count == 2
+
+
+def test_recall_sources_survive_a_guard_that_rewrites_the_answer_and_drops_why():
+    cat = make_cat()
+    run_start(cat)
+    guard_runs_on_input(cat)
+    run_fast_reply_end(cat, {})
+    documents = [{"id": "p-1", "score": 0.8, "metadata": {"source": "a.pdf"}}]
+    run_capture(cat, SimpleNamespace(text="Call 333", why=SimpleNamespace(memory={"declarative": documents})))
+    cat.working_memory.ict_guard_verdict = "output_personal_data"
+    run_finish(cat, SimpleNamespace(text="I cannot share that.", why=None))
+
+    assert json.loads(logger._writer.finishes()[0].recall_sources)[0]["source"] == "a.pdf"
+
+
+def test_a_form_is_recorded_like_a_tool():
+    cat = make_cat("I want a pizza")
+    run_start(cat)
+    run_capture(cat, message_with_steps([(("pizza_order", ""), "Which size?")]))
+    run_finish(cat, message_with_steps([(("pizza_order", ""), "Which size?")]))
+
+    assert logger._writer.finishes()[0].tools_used == "pizza_order"
+
+
+def test_no_tool_means_null_whether_steps_are_empty_or_missing():
+    for why in (None, SimpleNamespace(memory={"declarative": []}), SimpleNamespace(intermediate_steps=[])):
+        logger._writer.events.clear()
+        cat = make_cat()
+        run_start(cat)
+        run_capture(cat, SimpleNamespace(text="a", why=why))
+        run_finish(cat, SimpleNamespace(text="a", why=why))
+
+        assert logger._writer.finishes()[0].tools_used is None
+
+
+def test_the_tools_survive_a_guard_that_rewrites_the_answer_and_drops_why():
+    cat = make_cat()
+    run_start(cat)
+    guard_runs_on_input(cat)
+    run_fast_reply_end(cat, {})
+    run_capture(cat, message_with_steps([(("lookup", ""), "out")], "Call 333 1234567"))
+    cat.working_memory.ict_guard_verdict = "output_personal_data"
+
+    run_finish(cat, SimpleNamespace(text="I cannot share that.", why=None))
+
+    (record,) = logger._writer.finishes()
+    assert record.tools_used == "lookup" and record.output_verdict == "output_personal_data"
+
+
+def test_a_fast_reply_has_no_tools():
+    cat = make_cat()
+    run_start(cat)
+    run_fast_reply_end(cat, {"output": "Slow down."})
+
+    assert logger._writer.finishes()[0].tools_used is None
 
 
 def test_turn_blocked_on_input_closes_on_fast_reply():

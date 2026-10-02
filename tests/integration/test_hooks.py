@@ -40,6 +40,9 @@ def test_settings_model_registers_the_specified_defaults():
     assert defaults.db_password == ""
     assert defaults.db_require_ssl is True
     assert defaults.create_table is True
+    assert defaults.log_tool_input is False
+    assert defaults.log_tool_output is False
+    assert defaults.tool_text_limit == 1000
     assert defaults.queue_size == 1000
     assert defaults.retention_days == 0
 
@@ -171,3 +174,17 @@ def test_every_check_line_carries_the_plugin_prefix_including_the_tls_warning(mo
 
     assert len(lines) == 2
     assert all(message.startswith("RAG Interaction Logger: ") for _, message in lines)
+
+
+def test_the_tool_text_limit_is_bounded_by_the_settings_model():
+    model = settings.settings_model.function()
+
+    for value in (99, 10001):
+        try:
+            model(tool_text_limit=value)
+        except Exception as error:
+            assert "tool_text_limit" in str(error)
+        else:
+            raise AssertionError(f"{value} was accepted")
+    assert model(tool_text_limit=100).tool_text_limit == 100
+    assert model(tool_text_limit=10000).tool_text_limit == 10000

@@ -219,3 +219,10 @@ __marimo__/
 
 # Local plugin settings: hold the database password in plain text
 settings.json
+
+# Private development material, local links and agent entry points
+/DEV
+/AGENTS.MD
+/CLAUDE.MD
+/AGENTS.md
+/CLAUDE.md
