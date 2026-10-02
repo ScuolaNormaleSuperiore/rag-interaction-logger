@@ -248,3 +248,12 @@ def test_schema_module_does_not_import_cheshire_cat_or_the_driver():
 
     assert "import cat" not in source and "from cat" not in source
     assert "pymysql" not in source.lower()
+
+
+def test_the_table_in_the_readme_is_the_one_the_plugin_creates():
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```sql\n(.*?)```", readme, flags=re.DOTALL)
+    ddl = [block for block in blocks if block.startswith("CREATE TABLE IF NOT EXISTS")]
+
+    assert len(ddl) == 1
+    assert " ".join(ddl[0].replace(";", "").split()) == " ".join(CREATE_TABLE_SQL.split())

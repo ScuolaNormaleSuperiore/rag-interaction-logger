@@ -1,10 +1,15 @@
 # RAG Interaction Logger
 
-A [Cheshire Cat AI](https://cheshirecat.ai) plugin that records every interaction
-of a Cat instance (the question, the answer the LLM generated, the answer the user
-received, whether a guard blocked it, which documents were recalled and which tools
-ran) in a MySQL or MariaDB table, so it can be analysed with SQL while a RAG chatbot
-is being tested.
+A [Cheshire Cat AI](https://cheshirecat.ai) plugin that records each Cat interaction
+in a MySQL or MariaDB table for SQL analysis while a RAG chatbot is being tested.
+It captures questions, generated and delivered answers, guard verdicts, recalled
+documents and invoked tools.
+
+**For testing and staging, not production.** It optionally enriches records with data
+from `rag-guardrails` and `uptime_kuma_connector`, without depending on either.
+
+Rows contain user input; `db_password` is stored in plain text and TLS does not verify
+the server certificate. Keep `settings.json` private and use a trusted network.
 
 It only observes. It never changes a message, a reply, the hook flow or another
 plugin's state, and a database failure never breaks or slows a user turn: rows are
@@ -14,12 +19,25 @@ A WordPress plugin that works as backoffice and monitor for the table this plugi
 writes is available at
 <https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger-monitor>.
 
+## Quick start
+
+1. Have the DBA prepare the database and the user ([Set up the database](#set-up-the-database)).
+2. In the admin panel, open **Plugins**, install `rag-interaction-logger-<version>.zip` and activate it.
+3. Open the plugin settings, fill `db_host`, `db_port`, `db_name`, `db_user` and
+   `db_password`, and save.
+4. Read the Cat log: `RAG Interaction Logger: Database check passed` means it works
+   ([Check the connection](#check-the-connection)).
+5. Ask the Cat a question, then run
+   `SELECT * FROM ril_interactions ORDER BY id DESC LIMIT 1;`.
+
 ## Requirements
 
 - Cheshire Cat AI `1.9.2`.
 - An **external** MySQL `8.0`/`8.4` or MariaDB `10.4+` server, reachable from the Cat
   container. The database is created by hand; the plugin does not create databases or
-  users. Authentication must be `mysql_native_password`.
+  users. Authentication must be `mysql_native_password`. MariaDB uses it by default; on
+  MySQL `8.4` it is disabled and the server must be started with
+  `mysql_native_password=ON` (and `authentication_policy='mysql_native_password,,'`).
 - `PyMySQL>=1.1`, installed by the Cat from `requirements.txt`.
 
 Verified so far: MariaDB `10.4.32`. MySQL `8.0`/`8.4` and other MariaDB versions are
@@ -39,11 +57,9 @@ GRANT CREATE, INSERT, UPDATE, SELECT, DELETE ON ril.* TO 'ril_logger'@'%';
 SELECT user, host, plugin FROM mysql.user WHERE user = 'ril_logger';
 ```
 
-- `CREATE` lets the plugin create the table `ril_interactions` when it is missing. With
-  `create_table` turned off the DBA creates it and `CREATE` is not needed.
-- `UPDATE` is needed because each turn is written twice: a row is inserted when the
-  question arrives and updated when the turn ends. `DELETE` and `SELECT` serve the
-  retention purge.
+- `CREATE` is needed only when `create_table` is on. `UPDATE` finalizes each initial
+  row; `DELETE` serves retention; and `INSERT`, `UPDATE`, `SELECT` and `DELETE` are
+  also used by the connection check.
 - Drop `REQUIRE SSL` only for a local development server without TLS, and then turn
   `db_require_ssl` off in the plugin settings.
 
@@ -57,7 +73,7 @@ Open the plugin in the admin panel.
 | `db_port` | `3306` | TCP port. |
 | `db_name` | empty | The database created above. |
 | `db_user` | empty | The dedicated user. |
-| `db_password` | empty | Its password. |
+| `db_password` | empty | Database password. |
 | `db_require_ssl` | on | Require TLS. Turn off only for local development. |
 | `log_tool_input` | off | Also save the input the LLM gives to each tool. |
 | `log_tool_output` | off | Also save the text each tool returns. |
@@ -65,11 +81,6 @@ Open the plugin in the admin panel.
 | `create_table` | on | Create `ril_interactions` when it is missing. |
 | `queue_size` | `1000` | Events waiting for the writer; when full, new events are lost. |
 | `retention_days` | `0` | `0` keeps rows forever; a positive number deletes rows older than that many whole UTC days. |
-
-> **The password is saved in plain text in `settings.json`**, inside the plugin folder
-> (the admin panel only masks it on screen, and its settings API returns it). Protect
-> that file and do not commit it. TLS is encrypted but the server certificate is not
-> verified.
 
 ## Check the connection
 
@@ -99,8 +110,8 @@ port, never the password or the driver's text. Common codes:
 | `2003` | The server cannot be reached |
 | `2026` | TLS is required but the server does not offer it |
 
-The same line `TLS is not required for the database connection` is only a reminder that
-`db_require_ssl` is off.
+With `db_require_ssl` off, the log also shows `TLS is not required for the database
+connection to <host:port>` each time the writer connects: it is only a reminder.
 
 ## What is recorded
 
@@ -117,6 +128,61 @@ no sessions):
   source and score (never its text);
 - the names of the tools and forms that ran (`tools_used`), and, only if you turn the
   options on, their inputs (`tool_input`) and results (`tool_output`).
+
+### The table
+
+`ril_interactions` has one row per turn. `id` is generated by the database; the other
+columns are:
+
+| Column | Meaning |
+| --- | --- |
+| `ts` | When the question arrived (UTC, milliseconds). |
+| `duration_ms` | How long the turn took; empty while `incomplete`. |
+| `instance` | Host name of the Cat that handled the turn. |
+| `user_id` | The Cat user. |
+| `turn_id` | The `rag-guardrails` turn id if present, otherwise a random id. |
+| `outcome` | `generated`, `fast_reply` or `incomplete`. |
+| `question` | What the user typed. |
+| `llm_answer` | What the LLM generated; empty for `fast_reply`. |
+| `delivered` | What the user received. |
+| `guard_present` | `1` when `rag-guardrails` handled the turn. |
+| `input_verdict`, `output_verdict` | Verdicts of `rag-guardrails`; empty without it. |
+| `other_plugin_reply` | `1` when a plugin other than the guard answered before the LLM. |
+| `recall_count`, `recall_top_score` | Documents recalled and the best score. |
+| `tools_used` | Comma-separated names of the tools and forms that ran. |
+| `tool_input`, `tool_output` | JSON arrays, only with the options on. |
+| `recall_sources` | JSON array of `{id, source, score}`, never the text. |
+
+The plugin creates it when `create_table` is on. To create it by hand, run:
+
+```sql
+CREATE TABLE IF NOT EXISTS ril_interactions (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ ts DATETIME(3) NOT NULL,
+ duration_ms INT UNSIGNED NULL,
+ instance VARCHAR(255) NOT NULL,
+ user_id VARCHAR(255) NOT NULL,
+ turn_id VARCHAR(32) NULL,
+ outcome ENUM('generated','fast_reply','incomplete') NOT NULL,
+ question MEDIUMTEXT NULL,
+ llm_answer MEDIUMTEXT NULL,
+ delivered MEDIUMTEXT NULL,
+ guard_present BOOLEAN NOT NULL,
+ input_verdict VARCHAR(64) NULL,
+ output_verdict VARCHAR(64) NULL,
+ other_plugin_reply BOOLEAN NULL,
+ recall_count SMALLINT UNSIGNED NULL,
+ recall_top_score FLOAT NULL,
+ tools_used VARCHAR(255) NULL,
+ tool_input MEDIUMTEXT NULL,
+ tool_output MEDIUMTEXT NULL,
+ recall_sources TEXT NULL,
+ KEY idx_ts (ts),
+ KEY idx_user_ts (user_id, ts),
+ KEY idx_input_verdict (input_verdict),
+ KEY idx_output_verdict (output_verdict)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
 
 ### Personal data
 
@@ -175,27 +241,15 @@ WHERE outcome = 'incomplete' OR NOT guard_present GROUP BY outcome, guard_presen
 
 ## Tests
 
-The test suite is split by runtime dependency:
-
 ```bash
-python run-tests.py --unit          # pure Python; no Cheshire Cat required
-python run-tests.py --integration   # hook adapters; requires the running Cat container
-python run-tests.py                 # unit and integration tests in the container
-python run-tests.py --detailed      # same suite, listing each test
-python run-tests.py --database      # only the tests against a real MySQL or MariaDB server
+python run-tests.py              # unit, integration and, if configured, database tests
+python run-tests.py --unit       # pure Python, no Cheshire Cat needed
+python run-tests.py --database   # only the tests against a real MySQL or MariaDB server
 ```
 
-The tests live in `.tests/`; the name starts with a dot on purpose, so that Cheshire Cat,
-which imports every `.py` file in a plugin folder, does not import them.
-Unit tests cover pure record assembly, metadata and release packaging.
-Integration tests cover Cheshire Cat hook registration, priorities and the
-observer contract. Database tests need a server and a user that can create databases (they work in
-throwaway databases and never touch the application database). Describe it once:
-copy `.ril-test.env.example` to `.ril-test.env` (git-ignored) and fill it in; the runner
-reads it, and `python run-tests.py` then runs the database tests too. The same
-`RIL_TEST_DB_*` variables in the environment work and win over the file. Without a server
-the database tests are skipped, and the runner says so. The integration
-suite is skipped on a local interpreter where Cheshire Cat is unavailable.
+Integration tests need the running Cat container. Database tests need a server and a user
+that can create throwaway databases: copy `.ril-test.env.example` to `.ril-test.env`
+(git-ignored) and fill it in. Without it, the runner skips database tests and says so.
 
 ## License
 
