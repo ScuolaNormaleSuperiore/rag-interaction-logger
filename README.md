@@ -8,21 +8,20 @@ documents and invoked tools.
 **For testing and staging, not production.** It optionally enriches records with data
 from `rag-guardrails` and `uptime_kuma_connector`, without depending on either.
 
-Rows contain user input; `db_password` is stored in plain text and TLS does not verify
-the server certificate. Keep `settings.json` private and use a trusted network.
 
 It only observes. It never changes a message, a reply, the hook flow or another
 plugin's state, and a database failure never breaks or slows a user turn: rows are
 written by a background thread.
 
-A WordPress plugin that works as backoffice and monitor for the table this plugin
+A ***WordPress*** plugin that works as backoffice and monitor for the table this plugin
 writes is available at
 <https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger-monitor>.
 
 ## Quick start
 
 1. Have the DBA prepare the database and the user ([Set up the database](#set-up-the-database)).
-2. In the admin panel, open **Plugins**, install `rag-interaction-logger-<version>.zip` and activate it.
+2. In the admin panel, open **Plugins**, find **RAG Interaction Logger** among the
+   available plugins, and activate it.
 3. Open the plugin settings, fill `db_host`, `db_port`, `db_name`, `db_user` and
    `db_password`, and save.
 4. Read the Cat log: `RAG Interaction Logger: Database check passed` means it works
@@ -200,21 +199,10 @@ database work. If the database is slow, unreachable or the queue is full, the us
 is not affected: the event is lost and a single warning is logged (and one line when
 writes recover). Events still queued when the Cat stops are lost. There are no retries.
 
-## Updating an existing table
 
-`CREATE TABLE IF NOT EXISTS` never adds columns. If the table was created by an earlier
-version, add the missing ones once (valid on MySQL and MariaDB); until then inserts fail
-with code `1054` and the check on save reports it:
-
-```sql
-ALTER TABLE ril_interactions
-  ADD COLUMN tools_used VARCHAR(255) NULL AFTER recall_top_score,
-  ADD COLUMN tool_input MEDIUMTEXT NULL AFTER tools_used,
-  ADD COLUMN tool_output MEDIUMTEXT NULL AFTER tool_input,
-  ADD COLUMN recall_sources TEXT NULL AFTER tool_output;
-```
 
 ## Analysing the data
+
 
 A few starting points (all plain SQL for MySQL and MariaDB):
 
