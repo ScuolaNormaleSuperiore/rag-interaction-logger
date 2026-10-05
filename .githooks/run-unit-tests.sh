@@ -56,7 +56,11 @@ if [ -n "$(git diff --name-only -- '*.py' 2>/dev/null)" ]; then
 	echo "[RIL pre-commit]     tests run against the working tree, not the staged snapshot." >&2
 fi
 
-if ! "$python_bin" -m pytest "$test_target"; then
+# Use a fresh system temporary directory for each run. A directory under the plugin
+# can be owned by a container and then become unreadable to Windows pytest.
+pytest_temp_dir="$(mktemp -d -t ril-pytest.XXXXXX)"
+trap 'rm -rf "$pytest_temp_dir"' EXIT
+if ! "$python_bin" -m pytest --basetemp "$pytest_temp_dir" "$test_target"; then
 	echo >&2
 	echo "Commit blocked: unit tests failed." >&2
 	echo "Reproduce with: python -m pytest .tests/unit" >&2
