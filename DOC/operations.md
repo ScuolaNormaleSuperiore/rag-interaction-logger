@@ -23,6 +23,9 @@ unavailable database does not affect a user turn. Events can be lost when the qu
 full, writes fail, or the process stops. The logger reports the start of loss and later
 recovery; it does not retry writes.
 
+The queue is created when the plugin is activated, so a new `queue_size` applies only after
+the plugin is reactivated or the Cat restarts. The other settings apply from the next event.
+
 ## Example queries
 
 Query results can contain questions, answers, user identifiers, and other personal

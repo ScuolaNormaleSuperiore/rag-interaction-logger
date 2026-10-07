@@ -69,7 +69,8 @@ class RagInteractionLoggerSettings(BaseModel):
         le=10000,
         description=(
             "Maximum events waiting for the database writer (a turn queues two). "
-            "When the queue is full, new events are lost."
+            "When the queue is full, new events are lost. "
+            "Takes effect when the plugin is reactivated or the Cat restarts."
         ),
     )
     retention_days: int = Field(

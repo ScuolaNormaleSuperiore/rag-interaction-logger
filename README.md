@@ -51,7 +51,7 @@ supported by design but have not yet been verified.
 | `log_tool_output` | off | Save the text returned by each tool. |
 | `tool_text_limit` | `1000` | Maximum saved characters per tool input or output. |
 | `create_table` | on | Create `ril_interactions` if it is missing. |
-| `queue_size` | `1000` | Buffered write events; new events are lost when full. |
+| `queue_size` | `1000` | Buffered write events; new events are lost when full. Applies when the plugin is reactivated or the Cat restarts; the other settings apply from the next event. |
 | `retention_days` | `0` | `0` keeps rows forever; otherwise delete older whole UTC days. |
 
 ## Data, reliability, and operations

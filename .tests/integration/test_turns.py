@@ -447,6 +447,31 @@ def test_activated_twice_runs_one_worker_and_deactivated_stops_it(monkeypatch):
     assert workers() == []
 
 
+class BrokenWriter:
+    def start(self):
+        raise RuntimeError("can't start new thread")
+
+    def stop(self):
+        raise RuntimeError("worker did not stop")
+
+
+def test_a_writer_that_fails_to_start_or_stop_does_not_fail_the_cat(monkeypatch):
+    log = LogRecorder()
+    monkeypatch.setattr(logger, "_writer", BrokenWriter())
+    monkeypatch.setattr(logger, "log", log)
+    plugin_object = SimpleNamespace(load_settings=lambda: {})
+
+    assert logger.activated.function(plugin_object) is None
+    assert logger.deactivated.function(plugin_object) is None
+    assert logger.activated.function(plugin_object) is None  # reported once per kind
+
+    lines = [message for _, message in log.lines]
+    assert len(lines) == 2
+    assert "activated hook failed (RuntimeError)" in lines[0]
+    assert "deactivated hook failed (RuntimeError)" in lines[1]
+    assert all("thread" not in line and "did not stop" not in line for line in lines)
+
+
 def source_of_guardrails():
     path = REPO_ROOT.parent / "rag-guardrails" / "rag_guardrails.py"
     if not path.is_file():

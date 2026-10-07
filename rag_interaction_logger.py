@@ -63,15 +63,28 @@ _writer = Writer(load_settings=_load_settings, log=log)
 
 @plugin
 def activated(plugin_object):
-    """Start the writer; the Cat may call this again without a deactivation."""
-    _state["plugin"] = plugin_object
-    _writer.start()
+    """Start the writer; the Cat may call this again without a deactivation.
+
+    An error here would make the Cat fail the activation, so it is reported and
+    the logger stays idle instead.
+    """
+    try:
+        _state["plugin"] = plugin_object
+        _writer.start()
+    except Exception as error:
+        _hook_failed("activated", error)
 
 
 @plugin
 def deactivated(plugin_object):
-    """Stop the writer; rows still queued are lost."""
-    _writer.stop()
+    """Stop the writer; rows still queued are lost.
+
+    An error here would stop the Cat half-way through deactivating the plugin.
+    """
+    try:
+        _writer.stop()
+    except Exception as error:
+        _hook_failed("deactivated", error)
 
 
 @hook("fast_reply", priority=100)
