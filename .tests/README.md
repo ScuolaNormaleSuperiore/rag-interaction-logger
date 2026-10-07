@@ -24,7 +24,7 @@ cd rag-interaction-logger
 
 Integration and database tests run inside the Cheshire Cat container. Clone the plugin
 in the Cat core checkout at `cat/plugins/rag-interaction-logger`, so that
-`run-tests.py` can find the core `compose.yml` and the container can load the plugin.
+`.tests/run-tests.py` can find the core `compose.yml` and the container can load the plugin.
 Use Cheshire Cat AI 1.9.2.
 
 ## 2. Prepare the local Python environment
@@ -51,13 +51,13 @@ Unit tests exercise pure Python code and do not need Docker, Cheshire Cat, or a
 database:
 
 ```bash
-python run-tests.py --unit
+python .tests/run-tests.py --unit
 ```
 
 For individual test names and full pytest output:
 
 ```bash
-python run-tests.py --unit --detailed
+python .tests/run-tests.py --unit --detailed
 ```
 
 ## 4. Run integration tests
@@ -77,7 +77,7 @@ wiring, priorities, defaults, and its observer contract.
 4. Return to the plugin root and run:
 
    ```bash
-   python run-tests.py --integration
+   python .tests/run-tests.py --integration
    ```
 
 Add `--detailed` for verbose test output. If Docker Compose or the container is not
@@ -120,7 +120,7 @@ authorized to create and drop databases and users.
 5. Run the database suite:
 
    ```bash
-   python run-tests.py --database
+   python .tests/run-tests.py --database
    ```
 
 Never commit `.ril-test.env` or put its credentials in shell history, documentation,
@@ -134,7 +134,7 @@ container and also includes database tests when `RIL_TEST_DB_HOST` and
 were skipped:
 
 ```bash
-python run-tests.py
+python .tests/run-tests.py
 ```
 
 ## Why one guide

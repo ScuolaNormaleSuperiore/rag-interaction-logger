@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_runner():
-    spec = importlib.util.spec_from_file_location("run_tests", REPO_ROOT / "run-tests.py")
+    spec = importlib.util.spec_from_file_location("run_tests", REPO_ROOT / ".tests" / "run-tests.py")
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

@@ -68,10 +68,16 @@ diagnostics, and SQL examples.
 ## Tests
 
 ```bash
-python run-tests.py              # integration and, when configured, database tests
-python run-tests.py --unit       # pure Python tests
-python run-tests.py --database   # tests against MySQL or MariaDB
+python .tests/run-tests.py                  # all tests in the Cat container; database tests only when configured
+python .tests/run-tests.py --unit           # pure Python tests, no Docker (-u)
+python .tests/run-tests.py --integration    # Cat integration tests in the container (-i)
+python .tests/run-tests.py --database       # tests against MySQL or MariaDB (-b)
+python .tests/run-tests.py --detailed       # list every test; combine with any option above (-d)
 ```
+
+`--unit`, `--integration` and `--database` are mutually exclusive.
+
+To build the release ZIP: `python .tools/package-plugin.py`.
 
 See the [test suite guide](.tests/README.md) for setup and prerequisites.
 

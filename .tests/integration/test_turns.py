@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 logger = pytest.importorskip(
     "rag_interaction_logger",
-    reason="requires Cheshire Cat AI; run python run-tests.py --integration",
+    reason="requires Cheshire Cat AI; run python .tests/run-tests.py --integration",
 )
 from writer import Writer  # noqa: E402
 

@@ -1,6 +1,6 @@
 """The logger against a real MySQL or MariaDB server, in throwaway databases.
 
-Run with `python run-tests.py --database` (see `conftest.py` for the environment).
+Run with `python .tests/run-tests.py --database` (see `conftest.py` for the environment).
 """
 
 from dataclasses import replace

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 SERVICE = "cheshire-cat-core"
 PLUGIN_IN_CONTAINER = "/app/cat/plugins/rag-interaction-logger"
 PROJECT_COPY_IN_CONTAINER = "/tmp/ril-PROJECT.md"

@@ -10,7 +10,7 @@ credential is ever written to a file:
     RIL_TEST_DB_REQUIRE_SSL "true" to require TLS; default "false" (a development server)
     RIL_TEST_DB_TLS         "yes" or "no": whether the server offers TLS; unset skips the TLS tests
     RIL_TEST_PROJECT_MD     a copy of DEV/AGENTS/PROJECT.md, whose analysis queries are run
-                            (`run-tests.py --database` copies it into the container)
+                            (`.tests/run-tests.py --database` copies it into the container)
 
 Every test gets its own scratch database, created and dropped here, so the
 application database is never touched.

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 logger = pytest.importorskip(
     "rag_interaction_logger",
-    reason="requires Cheshire Cat AI; run python run-tests.py --integration",
+    reason="requires Cheshire Cat AI; run python .tests/run-tests.py --integration",
 )
 settings = pytest.importorskip("settings")
 CheckResult = pytest.importorskip("db").CheckResult
