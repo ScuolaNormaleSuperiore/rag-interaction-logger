@@ -19,8 +19,9 @@ An optional ***WordPress backoffice*** and monitor is available at
 
 ## Quick start
 
-1. Ask the DBA to prepare the database and logger user; see [database setup](DOC/database.md).
-2. In Cheshire Cat AI, activate **RAG Interaction Logger** from **Plugins**.
+1. Ask the DBA to prepare the database and logger user; see [database setup](https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger/blob/main/DOC/database.md).
+2. In Cheshire Cat AI, open **Plugins**, search for **RAG Interaction Logger** among the
+   available plugins, install it, and activate it.
 3. Set `db_host`, `db_port`, `db_name`, `db_user`, and `db_password`, then save.
 4. Check the Cat log for `RAG Interaction Logger: Database check passed`.
 5. Ask a question and run `SELECT * FROM ril_interactions ORDER BY id DESC LIMIT 1;`.
@@ -58,14 +59,17 @@ supported by design but have not yet been verified.
 
 The plugin stores turn timing, user and instance identifiers, question and answer text,
 Guardrails verdicts, recall metadata, and tool activity. See the concise
-[data reference](DOC/data.md) for fields, limits, JSON formats, and privacy notes.
+[data reference](https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger/blob/main/DOC/data.md) for fields, limits, JSON formats, and privacy notes.
 
 Events are queued in memory and written asynchronously. If the queue is full, the
 database is unavailable, or the process stops, some events can be lost; there are no
-retries. See [operations and analysis](DOC/operations.md) for connection checks,
+retries. See [operations and analysis](https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger/blob/main/DOC/operations.md) for connection checks,
 diagnostics, and SQL examples.
 
-## Tests
+## Development
+
+The tests and the packaging script live in the repository and are not part of the
+distributed plugin.
 
 ```bash
 python .tests/run-tests.py                  # all tests in the Cat container; database tests only when configured
@@ -79,8 +83,12 @@ python .tests/run-tests.py --detailed       # list every test; combine with any 
 
 To build the release ZIP: `python .tools/package-plugin.py`.
 
-See the [test suite guide](.tests/README.md) for setup and prerequisites.
+See the [test suite guide](https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger/blob/main/.tests/README.md) for setup and prerequisites.
+
+## Changelog
+
+See [CHANGELOG.md](https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger/blob/main/CHANGELOG.md).
 
 ## License
 
-GNU General Public License v3.0, see `LICENSE`.
+GNU General Public License v3.0, see [LICENSE](https://github.com/ScuolaNormaleSuperiore/rag-interaction-logger/blob/main/LICENSE).

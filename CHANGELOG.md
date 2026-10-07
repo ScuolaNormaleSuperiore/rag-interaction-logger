@@ -8,6 +8,8 @@ All notable changes to RAG Interaction Logger. The format follows
 ### Changed
 - `queue_size` is documented as taking effect when the plugin is reactivated or the Cat
   restarts; the other settings apply from the next event.
+- The README explains that the plugin is installed from the available plugins, links the
+  changelog and uses absolute links, so they also work from the Cat plugin page.
 - The README lists every way to run the tests and the command that builds the release ZIP.
 - `run-tests.py` moved to `.tests/` and `package-plugin.py` to `.tools/`. Run them as
   `python .tests/run-tests.py` and `python .tools/package-plugin.py`.
