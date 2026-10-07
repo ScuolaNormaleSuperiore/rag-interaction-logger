@@ -13,6 +13,7 @@ DIST_DIR = REPO_ROOT / "dist"
 INCLUDED_FILES = (
     "plugin.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "requirements.txt",
     "db.py",
