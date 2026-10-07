@@ -299,7 +299,9 @@ def test_the_purge_deletes_whole_utc_days_in_batches_and_keeps_the_boundary(scra
 
     writer.settings["retention_days"] = 3
     clock.now += 3601
-    scratch.pump(writer)
+    for _ in range(10):  # one cycle of batches per step: the purge pauses in between
+        scratch.pump(writer, steps=1)
+        clock.now += writer_module.PURGE_PAUSE_SECONDS
 
     kept = [row[0] for row in scratch.table_rows("ts")]
     assert kept == [ts.astimezone(UTC).replace(tzinfo=None) for ts in keep]
