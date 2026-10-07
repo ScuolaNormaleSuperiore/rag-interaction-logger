@@ -60,6 +60,7 @@ PURGE_INTERVAL_SECONDS = 24 * 3600
 PURGE_RECHECK_SECONDS = 3600
 PURGE_BATCH_SIZE = 1000
 PURGE_BATCHES_PER_CYCLE = 5
+PURGE_PAUSE_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,7 @@ class Writer:
         self._disabled_noted = False
         self._next_purge_check = 0.0
         self._purge_cutoff: datetime | None = None
+        self._purge_resume = 0.0
         self._tool_text_limit = TOOL_TEXT_LIMIT
         self._keeps_tool_input = False
         self._keeps_tool_output = False
@@ -257,8 +259,11 @@ class Writer:
             return
         self._report_losses(target)
         wait = POLL_SECONDS if timeout is None else timeout
+        if self._purge_cutoff is not None:
+            # A purge in progress wakes the worker when its pause ends, or at once for an event.
+            wait = min(wait, max(0.0, self._purge_resume - self._clock()))
         try:
-            event = target.get(timeout=0 if self._purge_cutoff is not None else wait)
+            event = target.get(timeout=wait)
         except queue.Empty:
             event = None
         if event is not None:
@@ -358,6 +363,8 @@ class Writer:
             self._purge_cutoff = self._start_purge(now)
             if self._purge_cutoff is None:
                 return
+        elif now < self._purge_resume:
+            return  # pausing between two cycles of batches, so the database gets a rest
         try:
             config, days = self._purge_settings()
             if config is None or days <= 0:
@@ -368,6 +375,7 @@ class Writer:
                 if self._delete_batch(connection) < PURGE_BATCH_SIZE:
                     self._end_purge(now, PURGE_INTERVAL_SECONDS)
                     return
+            self._purge_resume = now + PURGE_PAUSE_SECONDS
             self._succeeded()
         except Exception as error:
             self._fail("purge", None, error, self._config)
@@ -397,6 +405,7 @@ class Writer:
 
     def _end_purge(self, now: float, delay: float) -> None:
         self._purge_cutoff = None
+        self._purge_resume = 0.0
         self._next_purge_check = now + delay
 
     # -- reporting: only the worker writes log lines -------------------------

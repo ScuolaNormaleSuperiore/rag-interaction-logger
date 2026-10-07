@@ -517,14 +517,50 @@ def test_purge_runs_in_bounded_slices_interleaved_with_inserts(monkeypatch):
     harness.writer.step(timeout=0)
     assert len(harness.connection.of(INSERT_SQL)) == 1
     assert len(harness.connection.of(PURGE_SQL)) == 2
+    harness.now += writer_module.PURGE_PAUSE_SECONDS
     harness.writer.step(timeout=0)
     assert len(harness.connection.of(INSERT_SQL)) == 2
     assert len(harness.connection.of(PURGE_SQL)) == 4
+    harness.now += writer_module.PURGE_PAUSE_SECONDS
     harness.pump()
 
     assert len(harness.connection.of(PURGE_SQL)) == 6
+    harness.now += writer_module.PURGE_PAUSE_SECONDS
     harness.pump()
     assert len(harness.connection.of(PURGE_SQL)) == 6
+
+
+def test_a_purge_with_a_backlog_pauses_between_its_cycles_of_batches(monkeypatch):
+    monkeypatch.setattr(writer_module, "PURGE_BATCHES_PER_CYCLE", 2)
+    harness = Harness({"retention_days": 7})
+    harness.connection.purge_results = [1000] * 6 + [3]
+
+    harness.pump(100)  # the clock does not move: only the first cycle may run
+    assert len(harness.connection.of(PURGE_SQL)) == 2
+
+    harness.now += writer_module.PURGE_PAUSE_SECONDS / 2
+    harness.pump(100)
+    assert len(harness.connection.of(PURGE_SQL)) == 2
+
+    harness.now += writer_module.PURGE_PAUSE_SECONDS
+    harness.pump(100)
+    assert len(harness.connection.of(PURGE_SQL)) == 4
+
+
+def test_the_wait_for_an_event_ends_when_the_purge_pause_ends(monkeypatch):
+    monkeypatch.setattr(writer_module, "PURGE_BATCHES_PER_CYCLE", 1)
+    monkeypatch.setattr(writer_module, "POLL_SECONDS", 10.0)
+    harness = Harness({"retention_days": 7})
+    harness.connection.purge_results = [1000] * 5
+    waits = []
+    real_get = harness.writer._queue.get
+    harness.writer._queue.get = lambda timeout=None: (waits.append(timeout), real_get(timeout=0))[1]
+
+    harness.writer.step()
+    harness.writer.step()
+
+    assert waits[0] == writer_module.POLL_SECONDS  # nothing to purge yet: the usual poll
+    assert waits[1] == writer_module.PURGE_PAUSE_SECONDS  # not the poll, not zero
 
 
 def test_a_failed_purge_does_not_block_inserts_and_waits_a_day_to_retry():

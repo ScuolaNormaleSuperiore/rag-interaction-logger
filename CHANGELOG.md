@@ -15,6 +15,8 @@ All notable changes to RAG Interaction Logger. The format follows
 ### Fixed
 - The Cat no longer imports `run-tests.py` and `package-plugin.py` when the plugin is
   installed from the repository: only the runtime modules are loaded.
+- A purge with a large backlog now pauses one second between its cycles of batches instead
+  of sending `DELETE` statements back to back.
 - An error while the logger starts or stops its writer no longer makes the Cat fail the
   plugin activation or deactivation; it is reported as a safe warning instead.
 
