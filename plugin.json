@@ -1,6 +1,6 @@
 {
     "name": "RAG Interaction Logger",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "Observer plugin that records Cheshire Cat AI RAG interactions asynchronously in MySQL or MariaDB for SQL analysis during testing.",
     "min_cat_version": "1.9.2",
     "max_cat_version": "1.9.2",

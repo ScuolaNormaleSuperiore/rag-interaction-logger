@@ -10,6 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from record import (
     RECALL_SOURCE_LIMIT,
+    RECALL_LABEL_LIMIT,
+    RECALL_SOURCES_BYTES,
+    RECALL_TITLE_LIMIT,
+    RECALL_URL_LIMIT,
     RECALL_SOURCES_MAX,
     TOOL_CALLS_MAX,
     TOOL_TEXT_LIMIT,
@@ -125,7 +129,7 @@ DOCS = [
 
 def test_recall_sources_keep_id_source_and_score_in_the_recall_order():
     assert json.loads(recall_sources_json(DOCS)) == [
-        {"id": "p-1", "source": "guida_badge.pdf", "score": 0.834},
+        {"id": "p-1", "type": "x", "source": "guida_badge.pdf", "score": 0.834},
         {"id": "42", "source": "https://example.org/a", "score": 0.7},
     ]
 
@@ -155,6 +159,69 @@ def test_a_long_source_is_cut_before_serialising_and_flagged():
     (item,) = json.loads(recall_sources_json([{"id": "a", "metadata": {"source": "s" * 500}}]))
 
     assert item["source"] == "s" * RECALL_SOURCE_LIMIT and item["cut"] is True
+
+
+def test_the_identifying_metadata_is_kept_but_never_the_text_or_other_keys():
+    docs = [{"id": "w1", "type": "Document", "score": 0.87, "page_content": "SECRET TEXT",
+             "metadata": {"origin": "WordPress", "url": "https://sitoict.local/servizi/wifi-sns/",
+                          "title": "WiFi SNS", "wp_id": "414", "source": "user",
+                          "when": 1785754139.88, "internal": "HIDDEN"}}]
+
+    text = recall_sources_json(docs)
+
+    assert json.loads(text) == [{
+        "id": "w1", "type": "Document", "source": "user", "origin": "WordPress", "wp_id": "414",
+        "url": "https://sitoict.local/servizi/wifi-sns/", "title": "WiFi SNS", "score": 0.87,
+    }]
+    assert "SECRET" not in text and "HIDDEN" not in text and "when" not in text
+
+
+def test_a_numeric_wp_id_is_kept_and_a_boolean_or_empty_label_is_not():
+    docs = [{"id": "a", "type": "", "metadata": {"wp_id": 414, "origin": True}},
+            {"id": "b", "type": None, "metadata": {"wp_id": ["x"], "title": ""}}]
+
+    assert json.loads(recall_sources_json(docs)) == [{"id": "a", "wp_id": "414"}, {"id": "b"}]
+
+
+def test_a_long_title_is_cut_and_flagged_and_labels_are_cut_silently():
+    (item,) = json.loads(recall_sources_json([{
+        "id": "a", "type": "T" * 200, "metadata": {"title": "t" * 500, "origin": "o" * 200}}]))
+
+    assert len(item["title"]) == RECALL_TITLE_LIMIT and item["title_cut"] is True
+    assert len(item["type"]) == RECALL_LABEL_LIMIT and len(item["origin"]) == RECALL_LABEL_LIMIT
+
+
+def test_a_missing_or_invalid_url_is_not_an_error_and_a_url_alone_does_not_make_an_entry():
+    docs = [{"id": "a", "metadata": {"url": ""}}, {"id": "b", "metadata": {"url": 5}},
+            {"id": "c", "metadata": {"url": None}}, {"metadata": {"url": "https://x.org"}}]
+
+    assert json.loads(recall_sources_json(docs)) == [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+
+
+def test_a_long_url_is_cut_before_serialising_and_flagged():
+    (item,) = json.loads(recall_sources_json([{"id": "a", "metadata": {"url": "https://x.org/" + "u" * 900}}]))
+
+    assert len(item["url"]) == RECALL_URL_LIMIT and item["url_cut"] is True and "cut" not in item
+
+
+def test_the_largest_recall_text_fits_the_text_column_even_with_four_byte_characters():
+    docs = [{"id": "😀" * 64, "type": "😀" * 64, "score": 0.123456,
+             "metadata": {"source": "😀" * 400, "url": "😀" * 900, "title": "😀" * 400,
+                          "origin": "😀" * 64, "wp_id": "😀" * 64}} for _ in range(RECALL_SOURCES_MAX)]
+
+    text = recall_sources_json(docs)
+
+    assert len(text.encode("utf-8")) <= RECALL_SOURCES_BYTES < 65535
+    assert 0 < len(json.loads(text)) < RECALL_SOURCES_MAX  # the last documents were dropped
+    assert json.loads(text)[0]["id"] == "😀" * 64
+
+
+def test_a_normal_recall_is_never_shortened_by_the_size_guard():
+    docs = [{"id": str(i), "type": "Document", "score": 0.5,
+             "metadata": {"source": "user", "url": "https://x.org/" + "p" * 80, "title": "T" * 60,
+                          "origin": "WordPress", "wp_id": str(i)}} for i in range(RECALL_SOURCES_MAX)]
+
+    assert len(json.loads(recall_sources_json(docs))) == RECALL_SOURCES_MAX
 
 
 def test_a_long_id_is_cut_and_a_boolean_score_is_not_a_score():

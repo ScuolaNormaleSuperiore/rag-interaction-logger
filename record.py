@@ -14,6 +14,12 @@ TOOL_TEXT_LIMIT_MAX = 10000
 TOOL_CALLS_MAX = 10
 RECALL_SOURCES_MAX = 20
 RECALL_SOURCE_LIMIT = 200
+RECALL_URL_LIMIT = 500
+RECALL_TITLE_LIMIT = 200
+RECALL_LABEL_LIMIT = 64
+# The column is TEXT (65 535 bytes) and a strict server rejects the whole row when a value
+# is longer, so the JSON is kept under this size by dropping the last documents.
+RECALL_SOURCES_BYTES = 60_000
 RECALL_ID_LIMIT = 64
 
 
@@ -204,12 +210,15 @@ def tool_output_json(calls: list[tuple[str, str, str]], limit: int = TOOL_TEXT_L
 
 
 def recall_sources_json(declarative) -> str | None:
-    """Return id, source and score of each recalled document as a JSON array text.
+    """Return what identifies each recalled document as a JSON array text.
 
-    The document text is never read. `source` is the file name or URL the Cat
-    stored with the document. At most `RECALL_SOURCES_MAX` entries; each `source`
-    is cut to `RECALL_SOURCE_LIMIT` characters (with `"cut":true`) before the
-    array is built. None when nothing was recalled.
+    The document text is never read. Per document: `id`, `type`, `source` (the file
+    name or URL the Cat stored), and from its metadata `origin`, `title`, `wp_id` and
+    `url` (for example from the WordPress importer), then `score`. At most
+    `RECALL_SOURCES_MAX` entries; `source`, `url` and `title` are cut to their limit
+    (with `"cut"`, `"url_cut"`, `"title_cut"` true) before the array is built. If the
+    text would pass `RECALL_SOURCES_BYTES`, the last documents are dropped. None when
+    nothing was recalled.
     """
     if not isinstance(declarative, (list, tuple)):
         return None
@@ -220,9 +229,12 @@ def recall_sources_json(declarative) -> str | None:
             items.append(item)
         if len(items) == RECALL_SOURCES_MAX:
             break
-    if not items:
-        return None
-    return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+    while items:
+        text = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+        if len(text.encode("utf-8")) <= RECALL_SOURCES_BYTES:
+            return text
+        items.pop()
+    return None
 
 
 def finalize_fast_reply(
@@ -297,12 +309,33 @@ def _recall_item(entry) -> dict | None:
         item["source"] = source[:RECALL_SOURCE_LIMIT]
     if not item:
         return None
+    meta = metadata if isinstance(metadata, dict) else {}
+    for key, value in (("type", entry.get("type")), ("origin", meta.get("origin")), ("wp_id", meta.get("wp_id"))):
+        label = _label(value)
+        if label:
+            item[key] = label
+    url, title = meta.get("url"), meta.get("title")
+    if isinstance(url, str) and url:
+        item["url"] = url[:RECALL_URL_LIMIT]
+    if isinstance(title, str) and title:
+        item["title"] = title[:RECALL_TITLE_LIMIT]
     score = entry.get("score")
     if isinstance(score, (int, float)) and not isinstance(score, bool):
         item["score"] = round(float(score), 6)
     if cut:
         item["cut"] = True
+    if isinstance(url, str) and len(url) > RECALL_URL_LIMIT:
+        item["url_cut"] = True
+    if isinstance(title, str) and len(title) > RECALL_TITLE_LIMIT:
+        item["title_cut"] = True
     return item
+
+
+def _label(value) -> str | None:
+    """A short identifier such as a type, an origin or a post id: text or a number."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    return str(value)[:RECALL_LABEL_LIMIT] or None
 
 
 def _as_text(value) -> str:

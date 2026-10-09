@@ -11,7 +11,7 @@ def test_plugin_metadata_matches_the_logger_identity():
     metadata = json.loads((REPO_ROOT / "plugin.json").read_text(encoding="utf-8"))
 
     assert metadata["name"] == "RAG Interaction Logger"
-    assert metadata["version"] == "0.0.2"
+    assert metadata["version"] == "0.0.3"
     assert metadata["min_cat_version"] == metadata["max_cat_version"] == "1.9.2"
 
 

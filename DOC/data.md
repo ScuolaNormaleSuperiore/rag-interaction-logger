@@ -16,8 +16,11 @@
 Questions and answers are limited to 20,000 characters. Longer values end with
 `[cut: N characters in total]` before they enter the queue.
 
-`recall_sources` is a JSON array of `{id, source, score}` and never contains document
-text. `tool_input` and `tool_output` are JSON arrays with at most ten objects. Tool
+`recall_sources` is a JSON array of `{id, type, source, origin, wp_id, url, title, score}` and never
+contains document text. `origin`, `wp_id`, `url` and `title` come from the document
+metadata, as the WordPress importer stores them; `source` can be just `user` in that case.
+Empty fields are left out, and the array never exceeds 60,000 bytes (the last documents
+are dropped). `tool_input` and `tool_output` are JSON arrays with at most ten objects. Tool
 values are stored only when their setting is enabled and are limited by `tool_text_limit`.
 
 A shortened tool value includes `"cut":true` and its original `"chars"` count.
